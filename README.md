@@ -24,16 +24,46 @@ Friday conditioning rotation: Wk1 Scaled Cindy 12-min AMRAP · Wk2 5 rounds (gob
 
 **Features**
 
-- Winding path of day nodes — future days locked, current day pulses, completed days get a checkmark badge
-- Streak counter, XP total and a weekly progress ring in the top bar
-- One exercise at a time: big card, per-set checkboxes with bounce + haptic + pop sound
-- Circular rest timer that shifts green → amber → red, with a chime at zero
-- Full-screen "Lesson Complete" celebration with confetti and an XP count-up
+- Winding path of day nodes joined by curved connectors — future days locked, current day pulses, completed days get a checkmark badge
+- Streak, XP and coin counters plus a weekly progress ring in the top bar
+- A coach that picks your weights instead of asking you to guess (see below)
+- Linear session flow: set → rate the effort → rest → next set
+- Rest counts down, alarms at zero, then keeps counting your overtime — a long breather is logged, not punished
+- Mini-games during rest that hard-lock the second the timer runs out
+- Full-screen "Lesson Complete" celebration with confetti, XP count-up and what the coach changed
 - Plain-English how-to + form cue for every exercise via the info button
 - Daily reminder (9:00) and streak-at-risk warning (19:30) local notifications
-- History calendar with completed days highlighted, plus per-day weight logs
-- Settings: notification toggle, sound toggle, editable saved weights, reset plan
-- Progression nudge: hit every set two sessions running and the app suggests +5 lb
+- History calendar with completed days highlighted, plus per-set weight, effort and rest logs
+- Settings: your details, rest arcade, notification and sound toggles, weight overrides, reset plan
+
+---
+
+## The coach
+
+On first launch the app asks for age, height, body weight, sex (used only to scale starting loads) and lifting experience. From that it estimates a starting weight for every barbell and dumbbell lift, deliberately on the light side.
+
+After that it stops guessing and starts reading. Every set you log carries three things: the weight you actually used, how it felt (Easy / Just right / Hard / Couldn't finish) and how long you actually rested. Those drive the next suggestion:
+
+| What happened last session | What the coach does |
+|---|---|
+| You couldn't finish a set | Drops two increments |
+| Sets graded hard, or you stopped short | Drops one increment |
+| You needed a lot of extra rest | Holds the weight until rest tightens up |
+| Everything felt easy | Adds two increments |
+| Two clean sessions in a row | Adds one increment |
+| Solid but not easy | Holds — one more clean session earns the jump |
+
+It also reacts mid-workout: an easy first set bumps the weight before set 2, a failed set takes weight off the next one. Change the weight yourself any time — the coach reads what you actually lifted, not what it asked for.
+
+The home screen shows a 0–100 read on how you're tracking against the estimate for your body, and surfaces cautions only when they apply to you (age, BMI, first-timer, a long streak with no rest day). It is not medical advice, and it says so.
+
+---
+
+## Coins and the rest arcade
+
+Sets pay coins, scaled by honest effort — a hard set pays more than an easy one, and sticking to the prescribed rest pays a bonus. Finishing a session pays a lump sum. XP works the same way, so a genuinely hard week outscores a coasting one.
+
+Coins buy mini-games you can play during rest: **Tap Rush** is free, **Snake** costs 150, **Flap** costs 400. Every game locks itself the instant the rest timer hits zero, so the arcade can't turn a 90-second rest into a five-minute one.
 
 ---
 
