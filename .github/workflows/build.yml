@@ -1,0 +1,56 @@
+name: Build StarterPlan IPA
+
+on:
+  push:
+    branches: ["**"]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode.app
+
+      - name: Show versions
+        run: xcodebuild -version
+
+      - name: Archive (unsigned)
+        run: |
+          xcodebuild archive \
+            -project StarterPlan.xcodeproj \
+            -scheme StarterPlan \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -archivePath build/StarterPlan.xcarchive \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            ENABLE_BITCODE=NO \
+            | xcpretty || exit ${PIPESTATUS[0]}
+
+      - name: Package unsigned IPA
+        run: |
+          mkdir -p build/Payload
+          cp -R build/StarterPlan.xcarchive/Products/Applications/StarterPlan.app build/Payload/
+          cd build
+          zip -qry StarterPlan.ipa Payload
+          ls -lh StarterPlan.ipa
+
+      - name: Upload IPA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: StarterPlan-unsigned-ipa
+          path: build/StarterPlan.ipa
+          retention-days: 30
+
+      - name: Upload archive
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: StarterPlan-xcarchive
+          path: build/StarterPlan.xcarchive
+          retention-days: 7
