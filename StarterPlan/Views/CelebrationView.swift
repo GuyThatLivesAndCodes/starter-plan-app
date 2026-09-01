@@ -42,22 +42,27 @@ struct CelebrationView: View {
                 HStack(spacing: 12) {
                     statTile(icon: "bolt.fill", value: "+\(xpShown)", label: "XP", color: Theme.gold)
                     statTile(icon: "flame.fill", value: "\(payload.streak)", label: payload.streak == 1 ? "day" : "days", color: Theme.flame)
-                    statTile(icon: "checkmark.circle.fill", value: "\(payload.setsDone)", label: "sets", color: Theme.accent)
+                    statTile(icon: "circlebadge.2.fill", value: "+\(payload.coins)", label: "coins", color: Theme.teal)
                 }
                 .padding(.horizontal, 20)
 
-                if !payload.bumps.isEmpty {
-                    VStack(spacing: 6) {
-                        Label("Progression unlocked", systemImage: "arrow.up.circle.fill")
+                if !payload.notes.isEmpty {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Label("The coach adjusted your plan", systemImage: "brain.head.profile")
                             .font(.system(size: 13, weight: .heavy, design: .rounded))
                             .foregroundStyle(Theme.gold)
-                        Text("Add 5–10 lb next time: \(payload.bumps.joined(separator: ", "))")
-                            .font(.system(size: 13, weight: .medium, design: .rounded))
-                            .foregroundStyle(Theme.textDim)
-                            .multilineTextAlignment(.center)
+                        ForEach(payload.notes, id: \.self) { n in
+                            HStack(spacing: 8) {
+                                Image(systemName: "arrow.turn.down.right")
+                                    .font(.system(size: 11)).foregroundStyle(Theme.textDim)
+                                Text(n)
+                                    .font(.system(size: 13, weight: .semibold, design: .rounded))
+                                    .foregroundStyle(Theme.text)
+                            }
+                        }
                     }
                     .padding(16)
-                    .frame(maxWidth: .infinity)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                     .card(Theme.surface)
                     .padding(.horizontal, 20)
                 }

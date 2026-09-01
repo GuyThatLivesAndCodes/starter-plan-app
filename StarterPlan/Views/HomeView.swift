@@ -4,6 +4,7 @@ struct HomeView: View {
     @Environment(Store.self) private var store
     @State private var openDay: WorkoutDay?
     @State private var celebration: CelebrationPayload?
+    @State private var showOnboarding = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -12,6 +13,9 @@ struct HomeView: View {
             ScrollViewReader { proxy in
                 ScrollView(showsIndicators: false) {
                     LazyVStack(spacing: 0) {
+                        CoachSummaryCard()
+                            .padding(.top, 12)
+
                         ForEach(1...4, id: \.self) { week in
                             WeekHeader(week: week, progress: store.weekProgress(week))
                                 .padding(.top, week == 1 ? 8 : 28)
@@ -21,7 +25,8 @@ struct HomeView: View {
                                 let day = Plan.day(at: (week - 1) * 7 + d)
                                 PathNode(day: day,
                                          state: nodeState(day.index),
-                                         offset: waveOffset(day.index)) {
+                                         offset: waveOffset(day.index),
+                                         previousOffset: d == 0 ? nil : waveOffset(day.index - 1)) {
                                     tap(day)
                                 }
                                 .id(day.index)
@@ -46,6 +51,12 @@ struct HomeView: View {
         }
         .fullScreenCover(item: $celebration) { payload in
             CelebrationView(payload: payload) { celebration = nil }
+        }
+        .fullScreenCover(isPresented: $showOnboarding) {
+            BodyProfileForm(isOnboarding: true)
+        }
+        .onAppear {
+            if !store.profile.onboarded { showOnboarding = true }
         }
     }
 
@@ -84,6 +95,8 @@ struct TopBar: View {
                 }
 
             stat(icon: "bolt.fill", value: "\(store.profile.xp)", color: Theme.gold)
+
+            stat(icon: "circlebadge.2.fill", value: "\(store.profile.coins)", color: Theme.teal)
 
             Spacer()
 
@@ -153,53 +166,59 @@ struct PathNode: View {
     let day: WorkoutDay
     let state: NodeState
     let offset: CGFloat
+    let previousOffset: CGFloat?
     let action: () -> Void
 
     @State private var pulse = false
 
     var body: some View {
         VStack(spacing: 0) {
-            Rectangle()
-                .fill(state == .locked ? Theme.locked : Theme.accentDim.opacity(0.45))
-                .frame(width: 4, height: 22)
-                .offset(x: offset)
+            if let previousOffset {
+                PathConnector(fromOffset: previousOffset, toOffset: offset)
+                    .stroke(state == .locked ? Theme.locked : Theme.accentDim.opacity(0.55),
+                            style: StrokeStyle(lineWidth: 5, lineCap: .round))
+                    .frame(height: 34)
+            } else {
+                Color.clear.frame(height: 10)
+            }
 
             Button(action: action) {
-                ZStack {
-                    if state == .current {
+                Circle()
+                    .fill(fill)
+                    .frame(width: 72, height: 72)
+                    .shadow(color: glow, radius: state == .current ? 18 : 0)
+                    .overlay(
+                        Circle()
+                            .fill(Color.black.opacity(0.16))
+                            .mask(Circle().offset(y: 5))
+                    )
+                    .overlay(
+                        Image(systemName: icon)
+                            .font(.system(size: 26, weight: .bold))
+                            .foregroundStyle(iconColor)
+                    )
+                    // Pulse and badge live in overlays so they never push the layout around.
+                    .overlay(
                         Circle()
                             .stroke(Theme.accent.opacity(0.35), lineWidth: 4)
-                            .frame(width: pulse ? 104 : 76, height: pulse ? 104 : 76)
-                            .opacity(pulse ? 0 : 1)
+                            .scaleEffect(pulse ? 1.5 : 1)
+                            .opacity(state == .current ? (pulse ? 0 : 0.9) : 0)
+                    )
+                    .overlay(alignment: .bottomTrailing) {
+                        if state == .done {
+                            Image(systemName: "checkmark.seal.fill")
+                                .font(.system(size: 22))
+                                .foregroundStyle(Theme.gold)
+                                .background(Circle().fill(Theme.bg).frame(width: 18, height: 18))
+                                .offset(x: 6, y: 4)
+                        }
                     }
-                    Circle()
-                        .fill(fill)
-                        .frame(width: 72, height: 72)
-                        .shadow(color: glow, radius: state == .current ? 18 : 0)
-                    Circle()
-                        .fill(Color.black.opacity(0.18))
-                        .frame(width: 72, height: 72)
-                        .offset(y: 4)
-                        .mask(Circle().frame(width: 72, height: 72))
-                        .allowsHitTesting(false)
-                    Image(systemName: icon)
-                        .font(.system(size: 26, weight: .bold))
-                        .foregroundStyle(iconColor)
-
-                    if state == .done {
-                        Image(systemName: "checkmark.seal.fill")
-                            .font(.system(size: 22))
-                            .foregroundStyle(Theme.gold)
-                            .background(Circle().fill(Theme.bg).frame(width: 20, height: 20))
-                            .offset(x: 26, y: 24)
-                    }
-                }
             }
             .buttonStyle(.plain)
             .offset(x: offset)
             .onAppear {
                 guard state == .current else { return }
-                withAnimation(.easeOut(duration: 1.4).repeatForever(autoreverses: false)) { pulse = true }
+                withAnimation(.easeOut(duration: 1.5).repeatForever(autoreverses: false)) { pulse = true }
             }
 
             VStack(spacing: 1) {
@@ -213,6 +232,7 @@ struct PathNode: View {
             .padding(.top, 6)
             .offset(x: offset)
         }
+        .frame(maxWidth: .infinity)
     }
 
     private var icon: String {
@@ -242,6 +262,90 @@ struct PathNode: View {
     }
 
     private var glow: Color { state == .current ? Theme.accent.opacity(0.55) : .clear }
+}
+
+/// The line between two nodes — curves from the previous node's x to this one's.
+struct PathConnector: Shape {
+    let fromOffset: CGFloat
+    let toOffset: CGFloat
+
+    func path(in rect: CGRect) -> Path {
+        let start = CGPoint(x: rect.midX + fromOffset, y: rect.minY)
+        let end = CGPoint(x: rect.midX + toOffset, y: rect.maxY)
+        var p = Path()
+        p.move(to: start)
+        p.addCurve(to: end,
+                   control1: CGPoint(x: start.x, y: rect.midY),
+                   control2: CGPoint(x: end.x, y: rect.midY))
+        return p
+    }
+}
+
+/// The coach's read on how the user is doing, right at the top of the plan.
+struct CoachSummaryCard: View {
+    @Environment(Store.self) private var store
+    @State private var showProfile = false
+
+    var body: some View {
+        Group {
+            if let r = Coach.readout(store: store) {
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack(spacing: 14) {
+                        ZStack {
+                            Circle().stroke(Theme.locked, lineWidth: 7).frame(width: 58, height: 58)
+                            Circle()
+                                .trim(from: 0, to: Double(r.score) / 100)
+                                .stroke(Theme.accent, style: StrokeStyle(lineWidth: 7, lineCap: .round))
+                                .rotationEffect(.degrees(-90))
+                                .frame(width: 58, height: 58)
+                            Text("\(r.score)")
+                                .font(.system(size: 17, weight: .black, design: .rounded))
+                                .foregroundStyle(Theme.text)
+                        }
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(r.label)
+                                .font(.system(size: 16, weight: .black, design: .rounded))
+                                .foregroundStyle(Theme.text)
+                            Text(r.detail)
+                                .font(.system(size: 12, weight: .medium, design: .rounded))
+                                .foregroundStyle(Theme.textDim)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+
+                    ForEach(Coach.warnings(store: store).prefix(2)) { w in
+                        WarningRow(warning: w)
+                    }
+                }
+                .padding(16)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .card(Theme.surface)
+            } else {
+                Button {
+                    Feedback.shared.tap(); showProfile = true
+                } label: {
+                    HStack(spacing: 12) {
+                        Image(systemName: "person.crop.circle.badge.questionmark")
+                            .font(.system(size: 20)).foregroundStyle(Theme.gold)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Tell the coach about you")
+                                .font(.system(size: 15, weight: .heavy, design: .rounded))
+                                .foregroundStyle(Theme.text)
+                            Text("Age, height and weight — then it can pick your weights for you.")
+                                .font(.system(size: 12, weight: .medium, design: .rounded))
+                                .foregroundStyle(Theme.textDim)
+                        }
+                        Spacer()
+                        Image(systemName: "chevron.right").font(.system(size: 13, weight: .bold)).foregroundStyle(Theme.textDim)
+                    }
+                    .padding(16)
+                    .card(Theme.surface)
+                }
+                .buttonStyle(.plain)
+                .sheet(isPresented: $showProfile) { BodyProfileForm(isOnboarding: false) }
+            }
+        }
+    }
 }
 
 struct FinishedBanner: View {

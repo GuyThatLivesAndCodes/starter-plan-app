@@ -169,11 +169,31 @@ struct HistoryView: View {
 
 struct DayDetailSheet: View {
     let log: DayLog
+
+    private func effortColor(_ e: Effort) -> Color {
+        switch e {
+        case .easy: return Theme.teal
+        case .good: return Theme.accent
+        case .hard: return Theme.gold
+        case .failed: return Theme.danger
+        }
+    }
+
+    private func detailLine(_ r: SetRecord) -> String {
+        var parts = [r.effort.label]
+        if r.restSeconds > 0 {
+            parts.append("rested \(r.restSeconds / 60):\(String(format: "%02d", r.restSeconds % 60))")
+            if r.restOvertime > 0 { parts.append("+\(r.restOvertime)s over") }
+        }
+        return parts.joined(separator: " · ")
+    }
+
     @Environment(Store.self) private var store
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
         let day = Plan.day(at: log.dayIndex)
+        let records = store.records(forDay: log.dayIndex)
         let entries = store.entries(forDay: log.dayIndex)
 
         ScrollView {
@@ -187,7 +207,34 @@ struct DayDetailSheet: View {
                         .foregroundStyle(Theme.textDim)
                 }
 
-                if entries.isEmpty {
+                if !records.isEmpty {
+                    ForEach(records, id: \.persistentModelID) { r in
+                        HStack(spacing: 12) {
+                            Image(systemName: r.effort.icon)
+                                .font(.system(size: 13))
+                                .foregroundStyle(effortColor(r.effort))
+                                .frame(width: 30, height: 30)
+                                .background(Circle().fill(effortColor(r.effort).opacity(0.15)))
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("\(Plan.exercise(id: r.exerciseID)?.name ?? r.exerciseID) · set \(r.setNumber)")
+                                    .font(.system(size: 14, weight: .heavy, design: .rounded))
+                                    .foregroundStyle(Theme.text)
+                                Text(detailLine(r))
+                                    .font(.system(size: 12, weight: .medium, design: .rounded))
+                                    .foregroundStyle(Theme.textDim)
+                            }
+                            Spacer()
+                            if r.weight > 0 {
+                                Text("\(Int(r.weight)) lb")
+                                    .font(.system(size: 14, weight: .black, design: .rounded))
+                                    .foregroundStyle(Theme.accent)
+                            }
+                        }
+                        .padding(12)
+                        .frame(maxWidth: .infinity)
+                        .card(Theme.surface)
+                    }
+                } else if entries.isEmpty {
                     Text(day.kind.isRest ? "Rest day banked. Recovery counts." : "No set details recorded.")
                         .font(.system(size: 15, weight: .medium, design: .rounded))
                         .foregroundStyle(Theme.textDim)

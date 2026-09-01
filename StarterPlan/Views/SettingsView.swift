@@ -4,6 +4,8 @@ struct SettingsView: View {
     @Environment(Store.self) private var store
     @State private var showReset = false
     @State private var editingWeights = false
+    @State private var editingProfile = false
+    @State private var showArcade = false
 
     var body: some View {
         ScrollView(showsIndicators: false) {
@@ -12,6 +14,25 @@ struct SettingsView: View {
                     .font(.system(size: 26, weight: .black, design: .rounded))
                     .foregroundStyle(Theme.text)
                     .frame(maxWidth: .infinity, alignment: .leading)
+
+                Button {
+                    Feedback.shared.tap(); editingProfile = true
+                } label: {
+                    row(icon: "person.fill", title: "Your details",
+                        subtitle: profileSubtitle, color: Theme.gold, chevron: true)
+                }
+                .buttonStyle(.plain)
+                .card(Theme.surface)
+
+                Button {
+                    Feedback.shared.tap(); showArcade = true
+                } label: {
+                    row(icon: "gamecontroller.fill", title: "Rest arcade",
+                        subtitle: "\(store.profile.coins) coins · \(store.profile.unlockedGames.count) of \(GameCatalog.all.count) games",
+                        color: Theme.teal, chevron: true)
+                }
+                .buttonStyle(.plain)
+                .card(Theme.surface)
 
                 VStack(spacing: 0) {
                     toggleRow(icon: "bell.fill", title: "Daily reminders",
@@ -57,12 +78,20 @@ struct SettingsView: View {
             .padding(20)
         }
         .sheet(isPresented: $editingWeights) { WeightEditor() }
+        .sheet(isPresented: $editingProfile) { BodyProfileForm(isOnboarding: false) }
+        .sheet(isPresented: $showArcade) { GameShopView() }
         .alert("Reset everything?", isPresented: $showReset) {
             Button("Cancel", role: .cancel) {}
             Button("Reset", role: .destructive) { store.resetPlan(); Feedback.shared.tap() }
         } message: {
-            Text("Your streak, XP and every logged day will be cleared. Saved weights stay.")
+            Text("Your streak, XP, coins and every logged set will be cleared. Your details and unlocked games stay.")
         }
+    }
+
+    private var profileSubtitle: String {
+        let p = store.profile
+        guard p.hasBody else { return "Add age, height and weight for smart weights" }
+        return "\(p.age) · \(Int(p.heightIn) / 12)'\(Int(p.heightIn) % 12)\" · \(Int(p.bodyWeightLb)) lb · \(p.experience.label)"
     }
 
     private var divider: some View {
@@ -118,7 +147,7 @@ struct WeightEditor: View {
                 Text("Exercise weights")
                     .font(.system(size: 24, weight: .black, design: .rounded))
                     .foregroundStyle(Theme.text)
-                Text("These carry over to your next session automatically.")
+                Text("The coach picks these from your body stats and how your sets go. Override any of them here.")
                     .font(.system(size: 13, weight: .medium, design: .rounded))
                     .foregroundStyle(Theme.textDim)
 

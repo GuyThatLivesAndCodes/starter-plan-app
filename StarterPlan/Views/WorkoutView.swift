@@ -3,10 +3,17 @@ import SwiftUI
 struct CelebrationPayload: Identifiable {
     let id = UUID()
     let xp: Int
+    let coins: Int
     let streak: Int
     let dayTitle: String
     let setsDone: Int
-    let bumps: [String]        // exercise names earning a weight bump
+    let notes: [String]        // what the coach learned / will change next time
+}
+
+private enum Phase: Equatable {
+    case lift          // doing the current set
+    case rate          // "how did that feel?"
+    case rest          // counting down (and up)
 }
 
 struct WorkoutView: View {
@@ -16,16 +23,20 @@ struct WorkoutView: View {
     @Environment(Store.self) private var store
     @Environment(\.dismiss) private var dismiss
 
-    @State private var index = 0
-    @State private var checks: [String: Set<Int>] = [:]       // exerciseID -> completed set numbers
+    @State private var exerciseIndex = 0
+    @State private var setNumber = 1
+    @State private var phase: Phase = .lift
     @State private var weights: [String: Double] = [:]
+    @State private var suggestions: [String: Coach.Suggestion] = [:]
+    @State private var doneSets: [String: Int] = [:]
+    @State private var pendingEffort: Effort = .good
+    @State private var coinsEarned = 0
     @State private var infoExercise: Exercise?
-    @State private var restRemaining: Int?
     @State private var toast: String?
-    @State private var bumps: [String: Bool] = [:]
+    @State private var coachNote: String?
 
     private var exercises: [Exercise] { day.exercises }
-    private var current: Exercise? { exercises.indices.contains(index) ? exercises[index] : nil }
+    private var current: Exercise? { exercises.indices.contains(exerciseIndex) ? exercises[exerciseIndex] : nil }
 
     var body: some View {
         ZStack {
@@ -36,37 +47,43 @@ struct WorkoutView: View {
 
                 if day.kind.isRest {
                     restDayBody
+                    footer
                 } else if let ex = current {
-                    ScrollView(showsIndicators: false) {
-                        ExerciseCard(exercise: ex,
-                                     checked: checks[ex.id] ?? [],
-                                     weight: Binding(
-                                        get: { weights[ex.id] ?? 0 },
-                                        set: { weights[ex.id] = $0 }),
-                                     bumpSuggested: bumps[ex.id] ?? false,
-                                     onToggle: { toggle(ex, set: $0) },
-                                     onInfo: { infoExercise = ex },
-                                     onAcceptBump: {
-                                        store.acceptBump(for: ex.id, increment: 5)
-                                        weights[ex.id] = store.state(for: ex.id).lastWeight
-                                        bumps[ex.id] = false
-                                        Feedback.shared.tap()
-                                        flash("Bumped +5 lb. Earn it.")
-                                     })
+                    switch phase {
+                    case .lift:
+                        ScrollView(showsIndicators: false) {
+                            VStack(spacing: 14) {
+                                if let s = suggestions[ex.id] { CoachBanner(suggestion: s) }
+                                ExerciseCard(exercise: ex,
+                                             currentSet: setNumber,
+                                             setsDone: doneSets[ex.id] ?? 0,
+                                             weight: Binding(get: { weights[ex.id] ?? 0 },
+                                                             set: { weights[ex.id] = $0 }),
+                                             perSide: Coach.perSideLifts.contains(ex.id),
+                                             onInfo: { infoExercise = ex })
+                                if let note = coachNote { CoachNote(text: note) }
+                                ForEach(Coach.warnings(store: store, exercise: ex).prefix(2)) { w in
+                                    WarningRow(warning: w)
+                                }
+                                Color.clear.frame(height: 12)
+                            }
                             .padding(20)
-                            .id(ex.id)
-                            .transition(.asymmetric(insertion: .move(edge: .trailing).combined(with: .opacity),
-                                                    removal: .move(edge: .leading).combined(with: .opacity)))
-                        Color.clear.frame(height: 100)
+                        }
+                        footer
+
+                    case .rate:
+                        EffortPicker(exercise: ex, setNumber: setNumber) { effort in
+                            record(effort: effort, for: ex)
+                        }
+
+                    case .rest:
+                        RestPhaseView(target: Coach.restTarget(for: ex, profile: store.profile),
+                                      nextLabel: nextRestLabel,
+                                      store: store) { rested in
+                            finishRest(seconds: rested, exercise: ex)
+                        }
                     }
                 }
-
-                footer
-            }
-
-            if let remaining = restRemaining {
-                RestTimerOverlay(remaining: remaining, total: 90) { restRemaining = nil }
-                    .transition(.opacity.combined(with: .scale(scale: 0.94)))
             }
 
             if let toast {
@@ -77,23 +94,27 @@ struct WorkoutView: View {
                         .foregroundStyle(Theme.text)
                         .padding(.horizontal, 18).padding(.vertical, 12)
                         .background(Capsule().fill(Theme.surfaceHigh))
-                        .padding(.bottom, 130)
+                        .padding(.bottom, 120)
                 }
                 .transition(.move(edge: .bottom).combined(with: .opacity))
                 .allowsHitTesting(false)
             }
         }
         .sheet(item: $infoExercise) { ExerciseInfoSheet(exercise: $0) }
-        .onAppear {
-            for ex in exercises {
-                let st = store.state(for: ex.id)
-                weights[ex.id] = st.lastWeight
-                bumps[ex.id] = st.pendingBump
-            }
+        .onAppear(perform: prepare)
+    }
+
+    // MARK: Setup
+
+    private func prepare() {
+        for ex in exercises {
+            let s = Coach.suggestion(for: ex, store: store)
+            suggestions[ex.id] = s
+            weights[ex.id] = s.weight
         }
     }
 
-    // MARK: Pieces
+    // MARK: Header / footer
 
     private var header: some View {
         VStack(spacing: 10) {
@@ -108,18 +129,23 @@ struct WorkoutView: View {
                 .buttonStyle(.plain)
 
                 Spacer()
-
                 VStack(spacing: 1) {
                     Text(day.kind.title)
                         .font(.system(size: 15, weight: .heavy, design: .rounded))
                         .foregroundStyle(Theme.text)
-                    Text("Week \(day.week) · \(day.weekdayName)")
+                    Text(phaseCaption)
                         .font(.system(size: 11, weight: .semibold, design: .rounded))
                         .foregroundStyle(Theme.textDim)
                 }
-
                 Spacer()
-                Color.clear.frame(width: 34, height: 34)
+
+                HStack(spacing: 4) {
+                    Image(systemName: "circlebadge.2.fill").font(.system(size: 11))
+                    Text("\(coinsEarned)").font(.system(size: 13, weight: .black, design: .rounded))
+                }
+                .foregroundStyle(Theme.gold)
+                .frame(width: 46)
+                .contentTransition(.numericText())
             }
 
             GeometryReader { geo in
@@ -137,12 +163,143 @@ struct WorkoutView: View {
         .padding(.bottom, 14)
     }
 
+    private var phaseCaption: String {
+        guard let ex = current, !day.kind.isRest else { return "Week \(day.week) · \(day.weekdayName)" }
+        switch phase {
+        case .lift: return "\(ex.name) · set \(setNumber) of \(ex.sets)"
+        case .rate: return "How did that feel?"
+        case .rest: return "Resting"
+        }
+    }
+
+    private var footer: some View {
+        VStack(spacing: 10) {
+            Button(action: primaryAction) { Text(buttonTitle) }
+                .buttonStyle(ChunkyButtonStyle())
+        }
+        .padding(.horizontal, 20)
+        .padding(.bottom, 24)
+    }
+
+    private var buttonTitle: String {
+        if day.kind.isRest { return "Log rest day" }
+        guard let ex = current else { return "Finish workout" }
+        return "Set \(setNumber) done · \(weightLabel(ex))"
+    }
+
+    private func weightLabel(_ ex: Exercise) -> String {
+        let w = weights[ex.id] ?? 0
+        guard ex.tracksWeight, w > 0 else { return "bodyweight" }
+        return "\(Int(w)) lb"
+    }
+
+    private var progress: Double {
+        guard !day.kind.isRest else { return 1 }
+        let done = doneSets.values.reduce(0, +)
+        return day.totalSets == 0 ? 1 : Double(done) / Double(day.totalSets)
+    }
+
+    private var nextRestLabel: String {
+        guard let ex = current else { return "Continue" }
+        if setNumber <= ex.sets { return "Start set \(setNumber)" }
+        return exerciseIndex + 1 < exercises.count ? "Next exercise" : "Finish workout"
+    }
+
+    // MARK: Flow
+
+    private func primaryAction() {
+        if day.kind.isRest { finish(); return }
+        Feedback.shared.setChecked()
+        withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) { phase = .rate }
+    }
+
+    private func record(effort: Effort, for ex: Exercise) {
+        let weight = weights[ex.id] ?? 0
+        let target = Coach.restTarget(for: ex, profile: store.profile)
+        pendingEffort = effort
+        doneSets[ex.id] = (doneSets[ex.id] ?? 0) + 1
+
+        store.save(SetRecord(dayIndex: day.index, exerciseID: ex.id, setNumber: setNumber,
+                             weight: weight, effort: effort, restSeconds: 0, restTarget: target))
+
+        // Mid-workout weight correction from the coach.
+        if let nudge = Coach.nudgeAfterSet(exercise: ex, effort: effort, weight: weight, setNumber: setNumber) {
+            if nudge.adjust != 0 { weights[ex.id] = max(0, weight + nudge.adjust) }
+            coachNote = nudge.message
+        } else {
+            coachNote = nil
+        }
+
+        setNumber += 1
+        let lastSetOfLastExercise = setNumber > ex.sets && exerciseIndex + 1 >= exercises.count
+
+        if lastSetOfLastExercise {
+            finish()
+        } else {
+            withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) { phase = .rest }
+        }
+    }
+
+    private func finishRest(seconds: Int, exercise ex: Exercise) {
+        // Attach the real rest length to the set that was just logged.
+        if let rec = store.records(exerciseID: ex.id).first(where: { $0.dayIndex == day.index && $0.setNumber == setNumber - 1 }) {
+            rec.restSeconds = seconds
+            let coins = store.awardCoins(for: pendingEffort, restOvertime: rec.restOvertime)
+            withAnimation { coinsEarned += coins }
+        }
+        try? store.context.save()
+
+        if setNumber > ex.sets {
+            exerciseIndex += 1
+            setNumber = 1
+            coachNote = nil
+            flash(Copy.exerciseDone.randomElement()!)
+        }
+        withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) { phase = .lift }
+    }
+
+    private func flash(_ text: String) {
+        withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) { toast = text }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.4) {
+            withAnimation(.easeOut(duration: 0.25)) { if toast == text { toast = nil } }
+        }
+    }
+
+    private func finish() {
+        var results: [String: (sets: Int, weight: Double)] = [:]
+        for ex in exercises {
+            results[ex.id] = (sets: doneSets[ex.id] ?? 0, weight: weights[ex.id] ?? 0)
+        }
+        let xp = store.completeDay(day, results: results)
+
+        // Bonus coins for finishing the whole session.
+        let bonus = day.kind.isRest ? 5 : 15
+        store.awardBonus(bonus)
+
+        // What the coach will do differently next time.
+        var notes: [String] = []
+        for ex in exercises where ex.tracksWeight {
+            let next = Coach.suggestion(for: ex, store: store)
+            if next.direction == .up { notes.append("\(ex.name) → \(Int(next.weight)) lb next time") }
+            if next.direction == .down { notes.append("\(ex.name) → easing to \(Int(next.weight)) lb") }
+        }
+
+        Feedback.shared.celebrate()
+        Notifications.shared.refresh(store: store)
+        onFinish(CelebrationPayload(xp: xp,
+                                    coins: coinsEarned + bonus,
+                                    streak: store.profile.streak,
+                                    dayTitle: day.kind.title,
+                                    setsDone: doneSets.values.reduce(0, +),
+                                    notes: notes))
+    }
+
+    // MARK: Rest day
+
     private var restDayBody: some View {
         VStack(spacing: 16) {
             Spacer()
-            Image(systemName: "moon.zzz.fill")
-                .font(.system(size: 64))
-                .foregroundStyle(Theme.teal)
+            Image(systemName: "moon.zzz.fill").font(.system(size: 64)).foregroundStyle(Theme.teal)
             Text("Rest day")
                 .font(.system(size: 26, weight: .black, design: .rounded))
                 .foregroundStyle(Theme.text)
@@ -158,97 +315,169 @@ struct WorkoutView: View {
         .padding(.horizontal, 32)
         .frame(maxWidth: .infinity)
     }
+}
 
-    private var footer: some View {
-        VStack(spacing: 10) {
-            if !day.kind.isRest {
-                Button {
-                    Feedback.shared.tap()
-                    withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) { restRemaining = 90 }
-                } label: {
-                    Label("Rest 90s", systemImage: "timer")
-                        .font(.system(size: 14, weight: .bold, design: .rounded))
-                        .foregroundStyle(Theme.textDim)
+// MARK: - Coach UI bits
+
+struct CoachBanner: View {
+    let suggestion: Coach.Suggestion
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Image(systemName: icon).font(.system(size: 14, weight: .bold)).foregroundStyle(tint)
+                Text(suggestion.headline)
+                    .font(.system(size: 14, weight: .black, design: .rounded))
+                    .foregroundStyle(Theme.text)
+                Spacer()
+                Text(confidenceLabel)
+                    .font(.system(size: 10, weight: .black, design: .rounded))
+                    .foregroundStyle(Theme.textDim)
+                    .padding(.horizontal, 8).padding(.vertical, 3)
+                    .background(Capsule().fill(Theme.surfaceHigh))
+            }
+            Text(suggestion.reason)
+                .font(.system(size: 13, weight: .medium, design: .rounded))
+                .foregroundStyle(Theme.textDim)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: Theme.corner).fill(tint.opacity(0.12)))
+        .overlay(RoundedRectangle(cornerRadius: Theme.corner).stroke(tint.opacity(0.3), lineWidth: 1))
+    }
+
+    private var tint: Color {
+        switch suggestion.direction {
+        case .up: return Theme.accent
+        case .down: return Theme.flame
+        case .hold: return Theme.teal
+        case .start: return Theme.gold
+        }
+    }
+
+    private var icon: String {
+        switch suggestion.direction {
+        case .up: return "arrow.up.circle.fill"
+        case .down: return "arrow.down.circle.fill"
+        case .hold: return "equal.circle.fill"
+        case .start: return "sparkles"
+        }
+    }
+
+    private var confidenceLabel: String {
+        switch suggestion.confidence {
+        case .estimate: return "ESTIMATE"
+        case .tracking: return "LEARNING"
+        case .dialedIn: return "DIALED IN"
+        }
+    }
+}
+
+struct CoachNote: View {
+    let text: String
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "quote.bubble.fill").foregroundStyle(Theme.teal)
+            Text(text)
+                .font(.system(size: 13, weight: .semibold, design: .rounded))
+                .foregroundStyle(Theme.text)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .card(Theme.surfaceHigh)
+    }
+}
+
+struct WarningRow: View {
+    let warning: Coach.Warning
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: warning.severity == .caution ? "exclamationmark.triangle.fill" : "info.circle.fill")
+                .font(.system(size: 13))
+                .foregroundStyle(warning.severity == .caution ? Theme.gold : Theme.textDim)
+            Text(warning.text)
+                .font(.system(size: 12, weight: .medium, design: .rounded))
+                .foregroundStyle(Theme.textDim)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 14).fill(Theme.surface))
+    }
+}
+
+// MARK: - Effort picker
+
+struct EffortPicker: View {
+    let exercise: Exercise
+    let setNumber: Int
+    let onPick: (Effort) -> Void
+
+    var body: some View {
+        VStack(spacing: 18) {
+            Spacer()
+            Text("Set \(setNumber) — how did that feel?")
+                .font(.system(size: 22, weight: .black, design: .rounded))
+                .foregroundStyle(Theme.text)
+            Text("Be honest. This is what the coach uses to pick your next weight.")
+                .font(.system(size: 13, weight: .medium, design: .rounded))
+                .foregroundStyle(Theme.textDim)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 40)
+
+            VStack(spacing: 10) {
+                ForEach(Effort.allCases) { e in
+                    Button {
+                        Feedback.shared.tap()
+                        onPick(e)
+                    } label: {
+                        HStack(spacing: 14) {
+                            Image(systemName: e.icon)
+                                .font(.system(size: 17, weight: .bold))
+                                .foregroundStyle(color(e))
+                                .frame(width: 40, height: 40)
+                                .background(Circle().fill(color(e).opacity(0.15)))
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text(e.label)
+                                    .font(.system(size: 16, weight: .heavy, design: .rounded))
+                                    .foregroundStyle(Theme.text)
+                                Text(blurb(e))
+                                    .font(.system(size: 12, weight: .medium, design: .rounded))
+                                    .foregroundStyle(Theme.textDim)
+                            }
+                            Spacer()
+                        }
+                        .padding(14)
+                        .frame(maxWidth: .infinity)
+                        .card(Theme.surface)
+                    }
+                    .buttonStyle(.plain)
                 }
-                .buttonStyle(.plain)
             }
-
-            Button(action: advance) {
-                Text(buttonTitle)
-            }
-            .buttonStyle(ChunkyButtonStyle(color: isLast ? Theme.accent : (currentDone ? Theme.accent : Theme.surfaceHigh),
-                                           textColor: (isLast || currentDone) ? Color(hex: 0x10221A) : Theme.textDim))
-        }
-        .padding(.horizontal, 20)
-        .padding(.bottom, 24)
-    }
-
-    // MARK: Logic
-
-    private var progress: Double {
-        guard !day.kind.isRest else { return 1 }
-        let done = checks.values.reduce(0) { $0 + $1.count }
-        return day.totalSets == 0 ? 1 : Double(done) / Double(day.totalSets)
-    }
-
-    private var currentDone: Bool {
-        guard let ex = current else { return true }
-        return (checks[ex.id]?.count ?? 0) >= ex.sets
-    }
-
-    private var isLast: Bool { day.kind.isRest || index >= exercises.count - 1 }
-
-    private var buttonTitle: String {
-        if day.kind.isRest { return "Log rest day" }
-        if isLast { return "Finish workout" }
-        return currentDone ? "Next exercise" : "Skip to next"
-    }
-
-    private func toggle(_ ex: Exercise, set: Int) {
-        var s = checks[ex.id] ?? []
-        if s.contains(set) { s.remove(set) } else {
-            s.insert(set)
-            Feedback.shared.setChecked()
-            if s.count >= ex.sets {
-                Feedback.shared.exerciseDone()
-                flash(Copy.exerciseDone.randomElement()!)
-            } else {
-                flash(Copy.setDone.randomElement()!)
-            }
-        }
-        withAnimation(.spring(response: 0.3, dampingFraction: 0.55)) { checks[ex.id] = s }
-    }
-
-    private func flash(_ text: String) {
-        withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) { toast = text }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.3) {
-            withAnimation(.easeOut(duration: 0.25)) { if toast == text { toast = nil } }
+            .padding(.horizontal, 20)
+            Spacer()
         }
     }
 
-    private func advance() {
-        if isLast { finish(); return }
-        Feedback.shared.tap()
-        withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) { index += 1 }
+    private func color(_ e: Effort) -> Color {
+        switch e {
+        case .easy: return Theme.teal
+        case .good: return Theme.accent
+        case .hard: return Theme.gold
+        case .failed: return Theme.danger
+        }
     }
 
-    private func finish() {
-        var results: [String: (sets: Int, weight: Double)] = [:]
-        var bumps: [String] = []
-        for ex in exercises {
-            let done = checks[ex.id]?.count ?? 0
-            let w = weights[ex.id] ?? 0
-            results[ex.id] = (sets: done, weight: w)
-            let st = store.state(for: ex.id)
-            if done >= ex.sets && ex.tracksWeight && st.fullSessionStreak + 1 >= 2 { bumps.append(ex.name) }
+    private func blurb(_ e: Effort) -> String {
+        switch e {
+        case .easy: return "Could have done several more"
+        case .good: return "Finished it, last rep was work"
+        case .hard: return "Grinding, form started slipping"
+        case .failed: return "Stopped short or racked it early"
         }
-        let xp = store.completeDay(day, results: results)
-        Feedback.shared.celebrate()
-        Notifications.shared.refresh(store: store)
-        onFinish(CelebrationPayload(xp: xp,
-                                    streak: store.profile.streak,
-                                    dayTitle: day.kind.title,
-                                    setsDone: checks.values.reduce(0) { $0 + $1.count },
-                                    bumps: bumps))
     }
 }

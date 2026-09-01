@@ -2,12 +2,11 @@ import SwiftUI
 
 struct ExerciseCard: View {
     let exercise: Exercise
-    let checked: Set<Int>
+    let currentSet: Int
+    let setsDone: Int
     @Binding var weight: Double
-    let bumpSuggested: Bool
-    let onToggle: (Int) -> Void
+    let perSide: Bool
     let onInfo: () -> Void
-    let onAcceptBump: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
@@ -29,34 +28,12 @@ struct ExerciseCard: View {
                 .buttonStyle(.plain)
             }
 
-            if bumpSuggested {
-                Button(action: onAcceptBump) {
-                    HStack(spacing: 10) {
-                        Image(systemName: "arrow.up.circle.fill").foregroundStyle(Theme.gold)
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text("Ready to level up")
-                                .font(.system(size: 13, weight: .heavy, design: .rounded))
-                                .foregroundStyle(Theme.text)
-                            Text("Two clean sessions — add 5 lb")
-                                .font(.system(size: 12, weight: .medium, design: .rounded))
-                                .foregroundStyle(Theme.textDim)
-                        }
-                        Spacer()
-                        Text("+5")
-                            .font(.system(size: 14, weight: .black, design: .rounded))
-                            .foregroundStyle(Theme.gold)
-                    }
-                    .padding(12)
-                    .background(RoundedRectangle(cornerRadius: 14).fill(Theme.gold.opacity(0.12)))
-                }
-                .buttonStyle(.plain)
-            }
-
             if exercise.tracksWeight { weightRow }
 
             VStack(spacing: 10) {
                 ForEach(1...exercise.sets, id: \.self) { n in
-                    SetRow(number: n, total: exercise.sets, isChecked: checked.contains(n)) { onToggle(n) }
+                    SetRow(number: n, total: exercise.sets,
+                           state: n < currentSet ? .done : (n == currentSet ? .active : .upcoming))
                 }
             }
         }
@@ -66,18 +43,31 @@ struct ExerciseCard: View {
     }
 
     private var weightRow: some View {
-        HStack(spacing: 14) {
-            Text("Weight")
-                .font(.system(size: 14, weight: .bold, design: .rounded))
-                .foregroundStyle(Theme.textDim)
-            Spacer()
-            stepper("minus") { weight = max(0, weight - 5) }
-            Text(weight == 0 ? "—" : "\(Int(weight)) lb")
-                .font(.system(size: 18, weight: .heavy, design: .rounded))
-                .foregroundStyle(Theme.text)
-                .frame(minWidth: 76)
-                .contentTransition(.numericText())
-            stepper("plus") { weight += 5 }
+        VStack(spacing: 8) {
+            HStack(spacing: 14) {
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("Weight")
+                        .font(.system(size: 14, weight: .bold, design: .rounded))
+                        .foregroundStyle(Theme.textDim)
+                    if perSide {
+                        Text("per hand")
+                            .font(.system(size: 11, weight: .semibold, design: .rounded))
+                            .foregroundStyle(Theme.textDim.opacity(0.7))
+                    }
+                }
+                Spacer()
+                stepper("minus") { weight = max(0, weight - 5) }
+                Text(weight == 0 ? "—" : "\(Int(weight)) lb")
+                    .font(.system(size: 18, weight: .heavy, design: .rounded))
+                    .foregroundStyle(Theme.text)
+                    .frame(minWidth: 76)
+                    .contentTransition(.numericText())
+                stepper("plus") { weight += 5 }
+            }
+            Text("Change it any time — mid-set drops and jumps are all recorded.")
+                .font(.system(size: 11, weight: .medium, design: .rounded))
+                .foregroundStyle(Theme.textDim.opacity(0.8))
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(.vertical, 12).padding(.horizontal, 14)
         .background(RoundedRectangle(cornerRadius: 14).fill(Theme.surfaceHigh))
@@ -98,52 +88,50 @@ struct ExerciseCard: View {
     }
 }
 
+enum SetState { case done, active, upcoming }
+
 struct SetRow: View {
     let number: Int
     let total: Int
-    let isChecked: Bool
-    let action: () -> Void
-
-    @State private var bounce = false
+    let state: SetState
 
     var body: some View {
-        Button {
-            action()
-            bounce = true
-            withAnimation(.spring(response: 0.28, dampingFraction: 0.45)) { bounce = false }
-        } label: {
-            HStack(spacing: 14) {
-                Text("Set \(number)")
-                    .font(.system(size: 16, weight: .bold, design: .rounded))
-                    .foregroundStyle(isChecked ? Theme.accent : Theme.text)
-                Spacer()
-                Text("of \(total)")
-                    .font(.system(size: 13, weight: .semibold, design: .rounded))
-                    .foregroundStyle(Theme.textDim)
-                ZStack {
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .fill(isChecked ? Theme.accent : Color.clear)
-                        .frame(width: 32, height: 32)
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .stroke(isChecked ? Theme.accent : Theme.locked, lineWidth: 2.5)
-                        .frame(width: 32, height: 32)
-                    if isChecked {
-                        Image(systemName: "checkmark")
-                            .font(.system(size: 15, weight: .black))
-                            .foregroundStyle(Color(hex: 0x10221A))
-                    }
+        HStack(spacing: 14) {
+            Text("Set \(number)")
+                .font(.system(size: 16, weight: .bold, design: .rounded))
+                .foregroundStyle(state == .upcoming ? Theme.textDim : Theme.text)
+            Spacer()
+            Text(state == .active ? "now" : "of \(total)")
+                .font(.system(size: 13, weight: .semibold, design: .rounded))
+                .foregroundStyle(state == .active ? Theme.accent : Theme.textDim)
+            ZStack {
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(state == .done ? Theme.accent : Color.clear)
+                    .frame(width: 32, height: 32)
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .stroke(state == .done ? Theme.accent : (state == .active ? Theme.accent.opacity(0.7) : Theme.locked),
+                            lineWidth: 2.5)
+                    .frame(width: 32, height: 32)
+                if state == .done {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 15, weight: .black))
+                        .foregroundStyle(Color(hex: 0x10221A))
                 }
-                .scaleEffect(bounce ? 1.28 : 1)
             }
-            .padding(.horizontal, 16).padding(.vertical, 14)
-            .background(RoundedRectangle(cornerRadius: 16).fill(isChecked ? Theme.accent.opacity(0.12) : Theme.surfaceHigh))
-            .overlay(RoundedRectangle(cornerRadius: 16).stroke(isChecked ? Theme.accent.opacity(0.4) : .clear, lineWidth: 1.5))
+            .scaleEffect(state == .active ? 1.08 : 1)
+            .animation(.spring(response: 0.3, dampingFraction: 0.55), value: state)
         }
-        .buttonStyle(.plain)
+        .padding(.horizontal, 16).padding(.vertical, 14)
+        .background(RoundedRectangle(cornerRadius: 16)
+            .fill(state == .done ? Theme.accent.opacity(0.12) : Theme.surfaceHigh))
+        .overlay(RoundedRectangle(cornerRadius: 16)
+            .stroke(state == .active ? Theme.accent.opacity(0.5) : .clear, lineWidth: 1.5))
+        .opacity(state == .upcoming ? 0.55 : 1)
     }
 }
 
 struct ExerciseInfoSheet: View {
+
     let exercise: Exercise
     @Environment(\.dismiss) private var dismiss
 

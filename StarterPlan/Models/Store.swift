@@ -15,7 +15,90 @@ final class Profile {
     var notificationsEnabled: Bool = true
     var startedOn: Date = Date()
 
+    // Body profile — collected at first launch, editable in Settings.
+    var onboarded: Bool = false
+    var age: Int = 0
+    var heightIn: Double = 0          // total inches
+    var bodyWeightLb: Double = 0
+    var sexRaw: String = "unspecified"
+    var experienceRaw: String = "beginner"
+
+    // Economy
+    var coins: Int = 0
+    var unlockedGamesRaw: String = "tap_rush"     // comma separated game ids
+
+    var sex: BodySex {
+        get { BodySex(rawValue: sexRaw) ?? .unspecified }
+        set { sexRaw = newValue.rawValue }
+    }
+    var experience: Experience {
+        get { Experience(rawValue: experienceRaw) ?? .beginner }
+        set { experienceRaw = newValue.rawValue }
+    }
+    var unlockedGames: Set<String> {
+        get { Set(unlockedGamesRaw.split(separator: ",").map(String.init)) }
+        set { unlockedGamesRaw = newValue.sorted().joined(separator: ",") }
+    }
+    var hasBody: Bool { age > 0 && heightIn > 0 && bodyWeightLb > 0 }
+    var bmi: Double {
+        guard heightIn > 0 else { return 0 }
+        return 703 * bodyWeightLb / (heightIn * heightIn)
+    }
+
     init() {}
+}
+
+enum BodySex: String, CaseIterable, Identifiable {
+    case male, female, unspecified
+    var id: String { rawValue }
+    var label: String {
+        switch self {
+        case .male: return "Male"
+        case .female: return "Female"
+        case .unspecified: return "Rather not say"
+        }
+    }
+}
+
+enum Experience: String, CaseIterable, Identifiable {
+    case beginner, some, experienced
+    var id: String { rawValue }
+    var label: String {
+        switch self {
+        case .beginner: return "Brand new"
+        case .some: return "Some lifting"
+        case .experienced: return "Experienced"
+        }
+    }
+    var blurb: String {
+        switch self {
+        case .beginner: return "Never trained, or coming back after a long break"
+        case .some: return "On and off for a few months"
+        case .experienced: return "Lifting consistently for a year or more"
+        }
+    }
+}
+
+/// How a single set felt. Drives every weight adjustment the coach makes.
+enum Effort: Int, CaseIterable, Identifiable, Codable {
+    case easy = 0, good = 1, hard = 2, failed = 3
+    var id: Int { rawValue }
+    var label: String {
+        switch self {
+        case .easy: return "Easy"
+        case .good: return "Just right"
+        case .hard: return "Hard"
+        case .failed: return "Couldn't finish"
+        }
+    }
+    var icon: String {
+        switch self {
+        case .easy: return "wind"
+        case .good: return "checkmark.circle.fill"
+        case .hard: return "flame.fill"
+        case .failed: return "xmark.circle.fill"
+        }
+    }
 }
 
 @Model
@@ -59,6 +142,34 @@ final class SessionEntry {
         self.exerciseID = exerciseID
         self.weight = weight
         self.setsCompleted = setsCompleted
+        self.date = date
+    }
+}
+
+/// One completed (or attempted) set — the raw material the coach reads.
+@Model
+final class SetRecord {
+    var dayIndex: Int
+    var exerciseID: String
+    var setNumber: Int
+    var weight: Double
+    var effortRaw: Int
+    var restSeconds: Int        // actual rest taken after this set
+    var restTarget: Int         // rest the app asked for
+    var date: Date
+
+    var effort: Effort { Effort(rawValue: effortRaw) ?? .good }
+    var restOvertime: Int { max(0, restSeconds - restTarget) }
+
+    init(dayIndex: Int, exerciseID: String, setNumber: Int, weight: Double,
+         effort: Effort, restSeconds: Int = 0, restTarget: Int = 0, date: Date = .now) {
+        self.dayIndex = dayIndex
+        self.exerciseID = exerciseID
+        self.setNumber = setNumber
+        self.weight = weight
+        self.effortRaw = effort.rawValue
+        self.restSeconds = restSeconds
+        self.restTarget = restTarget
         self.date = date
     }
 }
@@ -149,6 +260,17 @@ final class Store {
         }
         if day.kind.isRest { xp = 20 }
 
+        // Effort bonus — harder honest work pays more than coasting.
+        for r in records(forDay: day.index) {
+            switch r.effort {
+            case .easy: xp += 1
+            case .good: xp += 3
+            case .hard: xp += 5
+            case .failed: xp += 2
+            }
+            if r.restOvertime == 0 { xp += 1 }
+        }
+
         context.insert(DayLog(dayIndex: day.index, xpEarned: xp))
         profile.xp += xp
         profile.lastCompletedDay = .now
@@ -162,6 +284,76 @@ final class Store {
         st.lastWeight += increment
         st.pendingBump = false
         st.fullSessionStreak = 0
+        try? context.save()
+    }
+
+    // MARK: Set records
+
+    func save(_ record: SetRecord) {
+        context.insert(record)
+        try? context.save()
+    }
+
+    func records(exerciseID: String) -> [SetRecord] {
+        let d = FetchDescriptor<SetRecord>(
+            predicate: #Predicate { $0.exerciseID == exerciseID },
+            sortBy: [SortDescriptor(\.date, order: .reverse)])
+        return (try? context.fetch(d)) ?? []
+    }
+
+    func allRecords() -> [SetRecord] {
+        (try? context.fetch(FetchDescriptor<SetRecord>(sortBy: [SortDescriptor(\.date)]))) ?? []
+    }
+
+    func records(forDay index: Int) -> [SetRecord] {
+        let d = FetchDescriptor<SetRecord>(predicate: #Predicate { $0.dayIndex == index },
+                                           sortBy: [SortDescriptor(\.setNumber)])
+        return (try? context.fetch(d)) ?? []
+    }
+
+    // MARK: Economy
+
+    /// Coins are earned for effort, not just attendance.
+    @discardableResult
+    func awardCoins(for effort: Effort, restOvertime: Int) -> Int {
+        var c: Int
+        switch effort {
+        case .easy: c = 2
+        case .good: c = 4
+        case .hard: c = 6
+        case .failed: c = 3      // showing up for a set you can't finish still counts
+        }
+        if restOvertime <= 0 { c += 1 }          // stuck to the prescribed rest
+        profile.coins += c
+        try? context.save()
+        return c
+    }
+
+    func awardBonus(_ amount: Int) {
+        profile.coins += amount
+        try? context.save()
+    }
+
+    func isUnlocked(game id: String) -> Bool { profile.unlockedGames.contains(id) }
+
+    @discardableResult
+    func unlock(game id: String, cost: Int) -> Bool {
+        guard profile.coins >= cost, !isUnlocked(game: id) else { return false }
+        profile.coins -= cost
+        var g = profile.unlockedGames
+        g.insert(id)
+        profile.unlockedGames = g
+        try? context.save()
+        return true
+    }
+
+    func saveBody(age: Int, heightIn: Double, weightLb: Double, sex: BodySex, experience: Experience) {
+        profile.age = age
+        profile.heightIn = heightIn
+        profile.bodyWeightLb = weightLb
+        profile.sex = sex
+        profile.experience = experience
+        profile.onboarded = true
         try? context.save()
     }
 
@@ -219,12 +411,14 @@ final class Store {
     func resetPlan() {
         for l in logs { context.delete(l) }
         for e in (try? context.fetch(FetchDescriptor<SessionEntry>())) ?? [] { context.delete(e) }
+        for r in (try? context.fetch(FetchDescriptor<SetRecord>())) ?? [] { context.delete(r) }
         for s in (try? context.fetch(FetchDescriptor<ExerciseState>())) ?? [] {
             s.fullSessionStreak = 0
             s.pendingBump = false
         }
         profile.xp = 0
         profile.streak = 0
+        profile.coins = 0
         profile.lastCompletedDay = nil
         profile.startedOn = .now
         try? context.save()
