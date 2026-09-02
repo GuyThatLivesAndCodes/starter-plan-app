@@ -8,6 +8,7 @@ struct CelebrationPayload: Identifiable {
     let dayTitle: String
     let setsDone: Int
     let notes: [String]        // what the coach learned / will change next time
+    let wasBonus: Bool
 }
 
 private enum Phase: Equatable {
@@ -40,6 +41,7 @@ struct WorkoutView: View {
     @State private var pendingCond: PendingCond?
     @State private var effortsThisExercise: [Effort] = []
     @State private var activityNotes: [String] = []
+    @State private var isBonus = false
 
     struct PendingRun {
         var seconds: Int; var meters: Double; var splits: [Double]
@@ -59,6 +61,20 @@ struct WorkoutView: View {
 
             VStack(spacing: 0) {
                 header
+
+                if isBonus {
+                    HStack(spacing: 8) {
+                        Image(systemName: "clock.badge.exclamationmark.fill").foregroundStyle(Theme.gold)
+                        Text("Bonus session — half XP, and your plan stays where it is.")
+                            .font(.system(size: 12, weight: .heavy, design: .rounded))
+                            .foregroundStyle(Theme.text)
+                        Spacer(minLength: 0)
+                    }
+                    .padding(.horizontal, 14).padding(.vertical, 10)
+                    .background(RoundedRectangle(cornerRadius: 12).fill(Theme.gold.opacity(0.14)))
+                    .padding(.horizontal, 20)
+                    .padding(.bottom, 10)
+                }
 
                 if day.kind.isRest {
                     restDayBody
@@ -202,6 +218,7 @@ struct WorkoutView: View {
     // MARK: Setup
 
     private func prepare() {
+        isBonus = store.isBonusDay(day.index)
         for ex in exercises {
             guard case .reps = ex.modality else { continue }
             let s = Coach.suggestion(for: ex, store: store)
@@ -324,7 +341,7 @@ struct WorkoutView: View {
             store.save(session)
             activityNotes.append(Coach.apply(session, exercise: ex, store: store))
             doneSets[ex.id] = ex.sets
-            store.awardCoins(for: effort, restOvertime: 0)
+            awardActivityCoins(effort)
             pendingRun = nil
             finish()
             return
@@ -336,7 +353,7 @@ struct WorkoutView: View {
             store.save(result)
             if let n = Coach.apply(result, exercise: ex, store: store) { activityNotes.append(n) }
             doneSets[ex.id] = ex.sets
-            store.awardCoins(for: effort, restOvertime: 0)
+            awardActivityCoins(effort)
             pendingCond = nil
             finish()
             return
@@ -373,11 +390,26 @@ struct WorkoutView: View {
         }
     }
 
+    private func awardActivityCoins(_ effort: Effort) {
+        var coins = store.awardCoins(for: effort, restOvertime: 0)
+        if isBonus {
+            let refund = coins - max(1, coins / 2)
+            store.awardBonus(-refund)
+            coins -= refund
+        }
+        withAnimation { coinsEarned += coins }
+    }
+
     private func finishRest(seconds: Int, exercise ex: Exercise) {
         // Attach the real rest length to the set that was just logged.
         if let rec = store.records(exerciseID: ex.id).first(where: { $0.dayIndex == day.index && $0.setNumber == setNumber - 1 }) {
             rec.restSeconds = seconds
-            let coins = store.awardCoins(for: pendingEffort, restOvertime: rec.restOvertime)
+            var coins = store.awardCoins(for: pendingEffort, restOvertime: rec.restOvertime)
+            if isBonus {
+                let refund = coins - max(1, coins / 2)
+                store.awardBonus(-refund)
+                coins -= refund
+            }
             withAnimation { coinsEarned += coins }
         }
         try? store.context.save()
@@ -413,10 +445,11 @@ struct WorkoutView: View {
         for ex in exercises {
             results[ex.id] = (sets: doneSets[ex.id] ?? 0, weight: weights[ex.id] ?? 0)
         }
-        let xp = store.completeDay(day, results: results)
+        let xp = store.completeDay(day, results: results, bonus: isBonus)
 
-        // Bonus coins for finishing the whole session.
-        let bonus = day.kind.isRest ? 5 : 15
+        // Lump sum for finishing the whole session.
+        var bonus = day.kind.isRest ? 5 : 15
+        if isBonus { bonus /= 2 }
         store.awardBonus(bonus)
 
         // What the coach will do differently next time.
@@ -434,7 +467,8 @@ struct WorkoutView: View {
                                     streak: store.profile.streak,
                                     dayTitle: day.kind.title,
                                     setsDone: doneSets.values.reduce(0, +),
-                                    notes: notes))
+                                    notes: notes,
+                                    wasBonus: isBonus))
     }
 
     // MARK: Rest day

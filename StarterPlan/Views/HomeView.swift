@@ -5,6 +5,7 @@ struct HomeView: View {
     @State private var openDay: WorkoutDay?
     @State private var celebration: CelebrationPayload?
     @State private var showOnboarding = false
+    @State private var bonusPrompt: WorkoutDay?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -25,6 +26,9 @@ struct HomeView: View {
                                 let day = Plan.day(at: (week - 1) * 7 + d)
                                 PathNode(day: day,
                                          state: nodeState(day.index),
+                                         dateLabel: store.dateLabel(for: day.index),
+                                         isToday: day.index == store.todaysIndex && !store.isComplete(day.index),
+                                         bonusRuns: store.bonusCount(day.index),
                                          offset: waveOffset(day.index),
                                          previousOffset: d == 0 ? nil : waveOffset(day.index - 1)) {
                                     tap(day)
@@ -55,6 +59,16 @@ struct HomeView: View {
         .fullScreenCover(isPresented: $showOnboarding) {
             BodyProfileForm(isOnboarding: true)
         }
+        .alert("Get ahead?", isPresented: Binding(get: { bonusPrompt != nil },
+                                                  set: { if !$0 { bonusPrompt = nil } })) {
+            Button("Not today", role: .cancel) { bonusPrompt = nil }
+            Button("Do it anyway") {
+                if let d = bonusPrompt { openDay = d }
+                bonusPrompt = nil
+            }
+        } message: {
+            Text("This one is scheduled for \(bonusPrompt.map { store.dateLabel(for: $0.index).lowercased() } ?? "later"). You can do it now, but it pays half XP and your plan won't move forward — it'll still be waiting on its own day.")
+        }
         .onAppear {
             if !store.profile.onboarded { showOnboarding = true }
         }
@@ -63,7 +77,7 @@ struct HomeView: View {
     private func tap(_ day: WorkoutDay) {
         guard store.isUnlocked(day.index) else { Feedback.shared.denied(); return }
         Feedback.shared.tap()
-        openDay = day
+        if store.isBonusDay(day.index) { bonusPrompt = day } else { openDay = day }
     }
 
     private func nodeState(_ index: Int) -> NodeState {
@@ -165,6 +179,9 @@ enum NodeState { case done, current, available, locked }
 struct PathNode: View {
     let day: WorkoutDay
     let state: NodeState
+    let dateLabel: String
+    let isToday: Bool
+    let bonusRuns: Int
     let offset: CGFloat
     let previousOffset: CGFloat?
     let action: () -> Void
@@ -221,13 +238,18 @@ struct PathNode: View {
                 withAnimation(.easeOut(duration: 1.5).repeatForever(autoreverses: false)) { pulse = true }
             }
 
-            VStack(spacing: 1) {
-                Text(day.weekdayName)
-                    .font(.system(size: 12, weight: .black, design: .rounded))
-                    .foregroundStyle(state == .locked ? Theme.textDim.opacity(0.6) : Theme.text)
+            VStack(spacing: 2) {
+                Text(dateLabel.uppercased())
+                    .font(.system(size: 10, weight: .black, design: .rounded))
+                    .foregroundStyle(isToday ? Theme.accent : Theme.textDim.opacity(state == .locked ? 0.5 : 0.9))
                 Text(day.kind.title)
-                    .font(.system(size: 11, weight: .semibold, design: .rounded))
-                    .foregroundStyle(Theme.textDim.opacity(state == .locked ? 0.5 : 1))
+                    .font(.system(size: 12, weight: .heavy, design: .rounded))
+                    .foregroundStyle(state == .locked ? Theme.textDim.opacity(0.6) : Theme.text)
+                if bonusRuns > 0 {
+                    Text("done early · still owed")
+                        .font(.system(size: 10, weight: .bold, design: .rounded))
+                        .foregroundStyle(Theme.gold)
+                }
             }
             .padding(.top, 6)
             .offset(x: offset)
@@ -311,6 +333,18 @@ struct CoachSummaryCard: View {
                                 .foregroundStyle(Theme.textDim)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
+                    }
+
+                    HStack(spacing: 8) {
+                        Image(systemName: store.todaysSessionDone ? "checkmark.circle.fill" : "calendar")
+                            .font(.system(size: 12))
+                            .foregroundStyle(store.todaysSessionDone ? Theme.accent : Theme.gold)
+                        Text(store.todaysSessionDone
+                             ? "Today's session is done. Anything else today is a bonus."
+                             : "Today: \(Plan.day(at: store.todaysIndex).kind.title)")
+                            .font(.system(size: 12, weight: .heavy, design: .rounded))
+                            .foregroundStyle(Theme.textDim)
+                        Spacer(minLength: 0)
                     }
 
                     ForEach(Coach.warnings(store: store).prefix(2)) { w in

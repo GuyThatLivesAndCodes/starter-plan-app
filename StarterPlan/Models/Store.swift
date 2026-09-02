@@ -265,6 +265,21 @@ final class ConditioningResult {
     }
 }
 
+/// A plan day done ahead of schedule. Worth half credit and, deliberately, it
+/// does not move the plan forward — you can't bank a week in one afternoon.
+@Model
+final class BonusSession {
+    var dayIndex: Int
+    var date: Date
+    var xpEarned: Int
+
+    init(dayIndex: Int, date: Date = .now, xpEarned: Int) {
+        self.dayIndex = dayIndex
+        self.date = date
+        self.xpEarned = xpEarned
+    }
+}
+
 // MARK: - Store
 
 @Observable
@@ -273,6 +288,7 @@ final class Store {
     private(set) var profile: Profile
     private(set) var completed: Set<Int> = []
     private(set) var logs: [DayLog] = []
+    private(set) var bonuses: [BonusSession] = []
 
     init(context: ModelContext) {
         self.context = context
@@ -289,6 +305,7 @@ final class Store {
 
     func reload() {
         logs = (try? context.fetch(FetchDescriptor<DayLog>(sortBy: [SortDescriptor(\.dayIndex)]))) ?? []
+        bonuses = (try? context.fetch(FetchDescriptor<BonusSession>(sortBy: [SortDescriptor(\.date)]))) ?? []
         completed = Set(logs.map(\.dayIndex))
         recomputeStreak()
     }
@@ -301,8 +318,54 @@ final class Store {
 
     var isPlanFinished: Bool { completed.count == Plan.days.count }
 
-    func isUnlocked(_ index: Int) -> Bool { index <= currentDayIndex }
     func isComplete(_ index: Int) -> Bool { completed.contains(index) }
+
+    // MARK: Sliding schedule
+    //
+    // The plan is a queue, not a calendar. Whatever is next is always dated
+    // today; everything behind it slides one day per day. Miss a day and that
+    // session simply moves onto the next day rather than being lost, and the
+    // days after it move with it.
+
+    /// The session the user is meant to do today.
+    var todaysIndex: Int { currentDayIndex }
+
+    /// True once the user has completed the scheduled session today.
+    var todaysSessionDone: Bool {
+        let cal = Calendar.current
+        return logs.contains { cal.isDateInToday($0.completedOn) }
+    }
+
+    func scheduledDate(for index: Int) -> Date {
+        let cal = Calendar.current
+        if let log = logs.first(where: { $0.dayIndex == index }) { return log.completedOn }
+        let offset = index - currentDayIndex
+        return cal.date(byAdding: .day, value: max(0, offset), to: cal.startOfDay(for: .now)) ?? .now
+    }
+
+    /// A session done ahead of its slot: allowed, half credit, doesn't advance the plan.
+    func isBonusDay(_ index: Int) -> Bool { index > currentDayIndex }
+
+    /// Today's session is always available. Anything further ahead only opens up
+    /// once today's is actually done.
+    func isUnlocked(_ index: Int) -> Bool {
+        if index <= currentDayIndex { return true }
+        return todaysSessionDone
+    }
+
+    func bonusCount(_ index: Int) -> Int { bonuses.filter { $0.dayIndex == index }.count }
+
+    /// Short label for the node on the path.
+    func dateLabel(for index: Int) -> String {
+        let cal = Calendar.current
+        let date = scheduledDate(for: index)
+        if cal.isDateInToday(date) { return "Today" }
+        if cal.isDateInTomorrow(date) { return "Tomorrow" }
+        if cal.isDateInYesterday(date) { return "Yesterday" }
+        let days = cal.dateComponents([.day], from: cal.startOfDay(for: .now), to: cal.startOfDay(for: date)).day ?? 0
+        if days > 0 && days < 7 { return date.formatted(.dateTime.weekday(.abbreviated)) }
+        return date.formatted(.dateTime.weekday(.abbreviated).day())
+    }
 
     func weekProgress(_ week: Int) -> Double {
         let range = ((week - 1) * 7)..<(week * 7)
@@ -331,7 +394,7 @@ final class Store {
 
     /// Records a finished workout. `results` maps exercise id -> (sets completed, weight used).
     @discardableResult
-    func completeDay(_ day: WorkoutDay, results: [String: (sets: Int, weight: Double)]) -> Int {
+    func completeDay(_ day: WorkoutDay, results: [String: (sets: Int, weight: Double)], bonus: Bool = false) -> Int {
         guard !completed.contains(day.index) else { return 0 }
 
         var xp = 0
@@ -362,7 +425,14 @@ final class Store {
             if r.restOvertime == 0 { xp += 1 }
         }
 
-        context.insert(DayLog(dayIndex: day.index, xpEarned: xp))
+        if bonus {
+            // Half credit, and the queue does not move — this session will still
+            // be waiting when its real slot comes around.
+            xp = max(1, xp / 2)
+            context.insert(BonusSession(dayIndex: day.index, xpEarned: xp))
+        } else {
+            context.insert(DayLog(dayIndex: day.index, xpEarned: xp))
+        }
         profile.xp += xp
         profile.lastCompletedDay = .now
         try? context.save()
@@ -496,7 +566,8 @@ final class Store {
 
     private func recomputeStreak() {
         let cal = Calendar.current
-        let days = Set(logs.map { cal.startOfDay(for: $0.completedOn) }).sorted(by: >)
+        let active = logs.map(\.completedOn) + bonuses.map(\.date)
+        let days = Set(active.map { cal.startOfDay(for: $0) }).sorted(by: >)
         guard let latest = days.first else { profile.streak = 0; return }
 
         let today = cal.startOfDay(for: .now)
@@ -517,9 +588,7 @@ final class Store {
 
     var streakAtRisk: Bool {
         guard profile.streak > 0 else { return false }
-        let cal = Calendar.current
-        guard let last = profile.lastCompletedDay else { return true }
-        return !cal.isDateInToday(last)
+        return !todaysSessionDone
     }
 
     // MARK: Settings / reset
@@ -539,6 +608,7 @@ final class Store {
         for r in (try? context.fetch(FetchDescriptor<SetRecord>())) ?? [] { context.delete(r) }
         for c in (try? context.fetch(FetchDescriptor<CardioSession>())) ?? [] { context.delete(c) }
         for c in (try? context.fetch(FetchDescriptor<ConditioningResult>())) ?? [] { context.delete(c) }
+        for b in (try? context.fetch(FetchDescriptor<BonusSession>())) ?? [] { context.delete(b) }
         for s in (try? context.fetch(FetchDescriptor<ExerciseState>())) ?? [] {
             s.cardioLowMin = 0; s.cardioHighMin = 0; s.holdTarget = 0; s.bestRounds = 0
         }

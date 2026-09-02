@@ -67,6 +67,22 @@ struct CelebrationView: View {
                     .padding(.horizontal, 20)
                 }
 
+                if payload.wasBonus {
+                    VStack(spacing: 4) {
+                        Label("Bonus session", systemImage: "clock.badge.exclamationmark.fill")
+                            .font(.system(size: 13, weight: .heavy, design: .rounded))
+                            .foregroundStyle(Theme.gold)
+                        Text("Half credit, and this one is still on your plan for its own day.")
+                            .font(.system(size: 12, weight: .medium, design: .rounded))
+                            .foregroundStyle(Theme.textDim)
+                            .multilineTextAlignment(.center)
+                    }
+                    .padding(14)
+                    .frame(maxWidth: .infinity)
+                    .card(Theme.surface)
+                    .padding(.horizontal, 20)
+                }
+
                 Text(Copy.streak(payload.streak))
                     .font(.system(size: 15, weight: .bold, design: .rounded))
                     .foregroundStyle(Theme.accent)
@@ -89,6 +105,7 @@ struct CelebrationView: View {
     }
 
     private var headline: String {
+        if payload.wasBonus { return "Extra credit!" }
         if payload.streak >= 7 { return "Unstoppable!" }
         if payload.streak >= 3 { return "\(payload.streak) days in a row!" }
         return ["Lesson complete!", "Nice work!", "That's a win."][payload.setsDone % 3]

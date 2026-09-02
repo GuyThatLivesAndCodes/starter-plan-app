@@ -5,9 +5,10 @@ import SwiftData
 struct StarterPlanApp: App {
     let container: ModelContainer
     @State private var store: Store
+    @Environment(\.scenePhase) private var scenePhase
 
     init() {
-        let container = try! ModelContainer(for: Profile.self, DayLog.self, ExerciseState.self, SessionEntry.self, SetRecord.self, CardioSession.self, ConditioningResult.self)
+        let container = try! ModelContainer(for: Profile.self, DayLog.self, ExerciseState.self, SessionEntry.self, SetRecord.self, CardioSession.self, ConditioningResult.self, BonusSession.self)
         self.container = container
         let store = Store(context: ModelContext(container))
         Feedback.shared.soundEnabled = store.profile.soundEnabled
@@ -21,6 +22,13 @@ struct StarterPlanApp: App {
                 .preferredColorScheme(.dark)
                 .tint(Theme.accent)
                 .onAppear { Notifications.shared.refresh(store: store) }
+                .onChange(of: scenePhase) { _, phase in
+                    // The schedule slides with the calendar, so rebuild whenever
+                    // the app comes back to the front.
+                    guard phase == .active else { return }
+                    store.reload()
+                    Notifications.shared.refresh(store: store)
+                }
         }
         .modelContainer(container)
     }

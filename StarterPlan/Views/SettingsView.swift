@@ -36,7 +36,7 @@ struct SettingsView: View {
 
                 VStack(spacing: 0) {
                     toggleRow(icon: "bell.fill", title: "Daily reminders",
-                              subtitle: "Morning nudge + evening streak warning",
+                              subtitle: "Four a day until the session is done",
                               color: Theme.flame,
                               isOn: Binding(get: { store.profile.notificationsEnabled },
                                             set: { store.setNotifications($0); Feedback.shared.tap() }))
