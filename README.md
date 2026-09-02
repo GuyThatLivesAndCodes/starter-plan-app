@@ -59,6 +59,30 @@ The home screen shows a 0–100 read on how you're tracking against the estimate
 
 ---
 
+## Every activity gets its own screen
+
+Nothing in the plan is a generic checkbox list. Each exercise declares how it's actually performed, and the app opens the screen built for it.
+
+**Trail cardio and the optional trail** run on live GPS. You get a route line on the map, distance, average and current pace, and a bar per elapsed minute so you can see exactly where you slowed. Drop below a walking pace and it chirps at you; flatline for eight seconds and it auto-pauses until you resume, with the stopped time logged separately. Location is entirely optional — "Just time me" gives you a clean stopwatch, and you can switch tracking on part way through a run without losing the clock.
+
+The coach then reads the run, not just your rating:
+
+| What the data shows | What happens to your next target |
+|---|---|
+| Bailed early, pace collapsed first | Target cut to around what you managed, then rebuilt |
+| Bailed early, pace steady to the end | Trimmed 5 minutes — your legs weren't the limit |
+| Went long, pace held or improved | Window moves up 5 minutes |
+| Went long but faded badly | Window holds — fix the pacing first |
+| In the window and it felt easy | Window moves up |
+
+**Planks and hollow holds** get a start/pause stopwatch with a marker chime at the target. That clock is for you to watch, nothing else — the next hold target moves on how the hold felt, never on the seconds shown.
+
+**Friday conditioning** has three different engines. AMRAP gives you a giant round-tapper, live per-round splits, an average round time and your personal best to chase, with a one-minute warning. The five-round day enforces its own rest between rounds. The for-time day is a stopwatch with round splits that colour-code when a round is slower than the one before, plus your best time to beat.
+
+**Bodyweight rep work** (ring rows, pull-ups) gets a rep tally so a set of 7 out of 8 is logged as 7, not as a failure.
+
+---
+
 ## Coins and the rest arcade
 
 Sets pay coins, scaled by honest effort — a hard set pays more than an easy one, and sticking to the prescribed rest pays a bonus. Finishing a session pays a lump sum. XP works the same way, so a genuinely hard week outscores a coasting one.
