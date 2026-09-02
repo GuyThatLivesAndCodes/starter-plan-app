@@ -13,6 +13,7 @@ struct TrailSessionView: View {
     @State private var showMap = true
     @State private var started = false
     @State private var camera: MapCameraPosition = .userLocation(fallback: .automatic)
+    @Environment(\.scenePhase) private var scenePhase
 
     private var targetSeconds: Int { targetLow * 60 }
     private var progress: Double { min(1, Double(tracker.elapsed) / Double(max(targetSeconds, 1))) }
@@ -31,12 +32,30 @@ struct TrailSessionView: View {
                     } else {
                         noLocationCard
                     }
+                    if tracker.locationEnabled && tracker.backgroundCapable {
+                        HStack(spacing: 8) {
+                            Image(systemName: "lock.iphone").foregroundStyle(Theme.accent)
+                            Text("Keeps tracking with the screen off — pocket it and go.")
+                                .font(.system(size: 12, weight: .semibold, design: .rounded))
+                                .foregroundStyle(Theme.textDim)
+                            Spacer(minLength: 0)
+                        }
+                        .padding(12)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(RoundedRectangle(cornerRadius: 12).fill(Theme.accent.opacity(0.10)))
+                    }
+
                     stateBanner
                     controls
                 }
                 Color.clear.frame(height: 20)
             }
             .padding(20)
+        }
+        // Coming back from the lock screen or another app: recompute from wall
+        // time rather than trusting anything a suspended timer did.
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active { tracker.sync() }
         }
     }
 

@@ -8,12 +8,15 @@ struct RestPhaseView: View {
     let store: Store
     let onDone: (Int) -> Void        // seconds actually rested
 
-    @State private var elapsed = 0
+    @State private var watch = Stopwatch()
     @State private var alarmed = false
     @State private var game: MiniGame?
     @State private var showShop = false
+    @Environment(\.scenePhase) private var scenePhase
     private let tick = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
+    private static let alertID = "starterplan.timer.rest"
 
+    private var elapsed: Int { watch.elapsed }
     private var remaining: Int { max(0, target - elapsed) }
     private var overtime: Int { max(0, elapsed - target) }
     private var overdue: Bool { elapsed >= target }
@@ -43,7 +46,11 @@ struct RestPhaseView: View {
                     gamePicker
                 }
 
-                Button(nextLabel) { Feedback.shared.tap(); onDone(elapsed) }
+                Button(nextLabel) {
+                    Feedback.shared.tap()
+                    Notifications.shared.cancelTimerAlert(id: Self.alertID)
+                    onDone(elapsed)
+                }
                     .buttonStyle(ChunkyButtonStyle(color: overdue ? Theme.flame : Theme.accent,
                                                    textColor: Color(hex: 0x10221A)))
                     .padding(.horizontal, 20)
@@ -53,11 +60,24 @@ struct RestPhaseView: View {
             .padding(.top, 6)
         }
         .sheet(isPresented: $showShop) { GameShopView() }
+        .onChange(of: scenePhase) { _, phase in if phase == .active { watch.sync() } }
+        .onAppear {
+            watch.start()
+            // Queued so the ding still lands if the phone is locked or the user
+            // is off in another app; cancelled the moment they come back to it.
+            Notifications.shared.scheduleTimerAlert(
+                id: Self.alertID, after: target,
+                title: "Rest's up 💪", body: nextLabel)
+        }
+        .onDisappear {
+            Notifications.shared.cancelTimerAlert(id: Self.alertID)
+        }
         .onReceive(tick) { _ in
-            elapsed += 1
+            watch.sync()
             if elapsed >= target && !alarmed {
                 alarmed = true
                 Feedback.shared.timerDone()
+                Notifications.shared.cancelTimerAlert(id: Self.alertID)
             }
         }
     }

@@ -13,6 +13,7 @@ final class RunTracker: NSObject, CLLocationManagerDelegate {
     private(set) var state: State = .idle
     private(set) var elapsed = 0                 // seconds of moving time
     private(set) var pausedSeconds = 0
+    private(set) var backgroundCapable = false   // true once iOS lets us run locked
     private(set) var meters: Double = 0
     private(set) var autoPauses = 0
     private(set) var currentSpeed: Double = 0    // m/s, smoothed
@@ -31,6 +32,14 @@ final class RunTracker: NSObject, CLLocationManagerDelegate {
     private var slowSeconds = 0
     private var warnedSlow = false
 
+    // Wall-clock bookkeeping. Ticks only trigger a recalculation — they never
+    // add to the total — so a locked screen or a trip to another app can't lose
+    // time the way a per-tick counter would.
+    private var movingBanked: TimeInterval = 0
+    private var movingSince: Date?
+    private var pausedBanked: TimeInterval = 0
+    private var pausedSince: Date?
+
     /// Below this (m/s) for a stretch and we call it stopped. ~0.6 m/s is a slow amble.
     private let stopThreshold: Double = 0.55
     private let autoPauseAfter = 8               // seconds under threshold
@@ -47,6 +56,7 @@ final class RunTracker: NSObject, CLLocationManagerDelegate {
 
     func start(withLocation: Bool) {
         state = .running
+        movingSince = Date()
         if withLocation { enableLocation() }
         startClock()
     }
@@ -66,30 +76,74 @@ final class RunTracker: NSObject, CLLocationManagerDelegate {
 
     func disableLocation() {
         manager.stopUpdatingLocation()
+        manager.allowsBackgroundLocationUpdates = false
         locationEnabled = false
+        backgroundCapable = false
     }
 
     func pause(auto: Bool) {
         guard state == .running else { return }
+        bankMoving()
+        pausedSince = Date()
         state = auto ? .autoPaused : .paused
         if auto {
             autoPauses += 1
             Feedback.shared.timerDone()
+            Notifications.shared.scheduleTimerAlert(
+                id: "starterplan.run.autopause",
+                after: 1,
+                title: "Paused — you stopped moving",
+                body: "StarterPlan paused your trail session. Tap when you're going again.")
         }
     }
 
     func resume() {
         guard state == .autoPaused || state == .paused else { return }
+        bankPaused()
+        movingSince = Date()
         state = .running
         slowSeconds = 0
         warnedSlow = false
+        Notifications.shared.cancelTimerAlert(id: "starterplan.run.autopause")
     }
 
     func finish() {
+        bankMoving()
+        bankPaused()
+        sync()
         state = .finished
         timer?.invalidate(); timer = nil
         manager.stopUpdatingLocation()
+        manager.allowsBackgroundLocationUpdates = false
+        Notifications.shared.cancelTimerAlert(id: "starterplan.run.autopause")
         if metersThisMinute > 0 || !splits.isEmpty { splits.append(metersThisMinute) }
+    }
+
+    private func bankMoving() {
+        if let s = movingSince { movingBanked += Date().timeIntervalSince(s) }
+        movingSince = nil
+    }
+
+    private func bankPaused() {
+        if let s = pausedSince { pausedBanked += Date().timeIntervalSince(s) }
+        pausedSince = nil
+    }
+
+    /// Recomputes both clocks from wall time. Safe to call as often as you like —
+    /// call it from the tick and whenever the app comes back to the foreground.
+    func sync() {
+        let moving = movingBanked + (movingSince.map { Date().timeIntervalSince($0) } ?? 0)
+        let paused = pausedBanked + (pausedSince.map { Date().timeIntervalSince($0) } ?? 0)
+        elapsed = max(0, Int(moving))
+        pausedSeconds = max(0, Int(paused))
+
+        // Close out any whole minutes that passed, including ones that elapsed
+        // while the app was asleep (those simply carry whatever distance the
+        // location updates managed to record).
+        while splits.count < elapsed / 60 {
+            splits.append(metersThisMinute)
+            metersThisMinute = 0
+        }
     }
 
     // MARK: Clock
@@ -102,19 +156,9 @@ final class RunTracker: NSObject, CLLocationManagerDelegate {
     }
 
     private func tick() {
-        switch state {
-        case .running:
-            elapsed += 1
-            if elapsed % 60 == 0 {
-                splits.append(metersThisMinute)
-                metersThisMinute = 0
-            }
-            if locationEnabled { watchForStopping() }
-        case .autoPaused, .paused:
-            pausedSeconds += 1
-        default:
-            break
-        }
+        guard state == .running || state == .autoPaused || state == .paused else { return }
+        sync()
+        if state == .running && locationEnabled { watchForStopping() }
     }
 
     /// Two-stage: a nudge when the pace collapses, an auto-pause when it flatlines.
@@ -136,6 +180,12 @@ final class RunTracker: NSObject, CLLocationManagerDelegate {
 
     private func beginUpdates() {
         locationEnabled = true
+        // Requires the location background mode, which the app declares. This is
+        // what keeps the session running with the screen off.
+        manager.allowsBackgroundLocationUpdates = true
+        manager.pausesLocationUpdatesAutomatically = false
+        manager.showsBackgroundLocationIndicator = true
+        backgroundCapable = true
         manager.startUpdatingLocation()
     }
 

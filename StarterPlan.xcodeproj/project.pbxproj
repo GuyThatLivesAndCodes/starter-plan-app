@@ -176,6 +176,7 @@
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UIBackgroundModes = location;
 				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "StarterPlan tracks your route during trail sessions to measure distance and pace. Everything stays on your phone.";
 				INFOPLIST_KEY_NSMotionUsageDescription = "Used to tell when you've stopped moving during a trail session.";
 				INFOPLIST_KEY_UIStatusBarStyle = UIStatusBarStyleLightContent;
@@ -205,6 +206,7 @@
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UIBackgroundModes = location;
 				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "StarterPlan tracks your route during trail sessions to measure distance and pace. Everything stays on your phone.";
 				INFOPLIST_KEY_NSMotionUsageDescription = "Used to tell when you've stopped moving during a trail session.";
 				INFOPLIST_KEY_UIStatusBarStyle = UIStatusBarStyleLightContent;

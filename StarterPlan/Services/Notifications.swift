@@ -76,14 +76,50 @@ final class Notifications {
     }
 
     func cancelAll() {
-        UNUserNotificationCenter.current().removeAllPendingNotificationRequests()
+        removeNudges()
+    }
+
+    /// Only clears the daily nudges — in-workout timer alerts are left alone.
+    private func removeNudges() {
+        let center = UNUserNotificationCenter.current()
+        center.getPendingNotificationRequests { requests in
+            let ids = requests.map(\.identifier).filter { $0.hasPrefix(self.prefix) }
+            center.removePendingNotificationRequests(withIdentifiers: ids)
+        }
+    }
+
+    // MARK: In-workout timer alerts
+    //
+    // A rest or hold timer that finishes while the phone is locked can't play a
+    // sound from a suspended app, so the alarm is queued as a local notification
+    // and cancelled if the user gets back before it fires.
+
+    func scheduleTimerAlert(id: String, after seconds: Int, title: String, body: String) {
+        guard seconds > 0 else { return }
+        let center = UNUserNotificationCenter.current()
+        center.removePendingNotificationRequests(withIdentifiers: [id])
+
+        let content = UNMutableNotificationContent()
+        content.title = title
+        content.body = body
+        content.sound = .default
+        content.interruptionLevel = .timeSensitive
+
+        center.add(UNNotificationRequest(
+            identifier: id,
+            content: content,
+            trigger: UNTimeIntervalNotificationTrigger(timeInterval: TimeInterval(seconds), repeats: false)))
+    }
+
+    func cancelTimerAlert(id: String) {
+        UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: [id])
     }
 
     // MARK: Scheduling
 
     private func schedule(store: Store) {
         let center = UNUserNotificationCenter.current()
-        center.removeAllPendingNotificationRequests()
+        removeNudges()
         guard !store.isPlanFinished else { return }
 
         let cal = Calendar.current

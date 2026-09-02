@@ -10,10 +10,14 @@ struct HoldTimerView: View {
     let setNumber: Int
     let onDone: (Int) -> Void        // seconds actually held
 
-    @State private var elapsed = 0
-    @State private var running = false
+    @State private var watch = Stopwatch()
     @State private var passedTarget = false
     private let tick = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
+    private static let alertID = "starterplan.timer.hold"
+    @Environment(\.scenePhase) private var scenePhase
+
+    private var elapsed: Int { watch.elapsed }
+    private var running: Bool { watch.isRunning }
 
     private var fraction: Double { min(1, Double(elapsed) / Double(max(target, 1))) }
     private var color: Color {
@@ -79,17 +83,29 @@ struct HoldTimerView: View {
         .padding(.vertical, 10)
         .onReceive(tick) { _ in
             guard running else { return }
-            elapsed += 1
-            if elapsed == target && !passedTarget {
+            watch.sync()
+            if elapsed >= target && !passedTarget {
                 passedTarget = true
                 Feedback.shared.timerDone()      // a marker, not a stop sign
+                Notifications.shared.cancelTimerAlert(id: Self.alertID)
             }
         }
+        .onChange(of: scenePhase) { _, phase in if phase == .active { watch.sync() } }
+        .onDisappear { Notifications.shared.cancelTimerAlert(id: Self.alertID) }
     }
 
     private func toggle() {
         Feedback.shared.tap()
-        withAnimation { running.toggle() }
+        withAnimation {
+            watch.toggle()
+            if watch.isRunning && !passedTarget {
+                Notifications.shared.scheduleTimerAlert(
+                    id: Self.alertID, after: max(1, target - elapsed),
+                    title: "\(target)s reached", body: "Hold as long as your form holds.")
+            } else {
+                Notifications.shared.cancelTimerAlert(id: Self.alertID)
+            }
+        }
     }
 }
 
@@ -157,17 +173,21 @@ struct AmrapView: View {
     let brief: String
     let onFinish: (_ rounds: Int, _ partial: Int, _ seconds: Int, _ splits: [Int]) -> Void
 
-    @State private var elapsed = 0
+    @State private var watch = Stopwatch()
     @State private var running = false
     @State private var rounds = 0
     @State private var partial = 0
     @State private var splits: [Int] = []
     @State private var lastRoundAt = 0
     @State private var finished = false
+    @Environment(\.scenePhase) private var scenePhase
     private let tick = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
     private var total: Int { minutes * 60 }
+    private var elapsed: Int { watch.elapsed }
     private var remaining: Int { max(0, total - elapsed) }
+    private static let alertID = "starterplan.timer.amrap"
+
 
     var body: some View {
         ScrollView(showsIndicators: false) {
@@ -204,7 +224,14 @@ struct AmrapView: View {
                 if !brief.isEmpty { CoachNote(text: brief) }
 
                 if !running && !finished {
-                    Button("Start the clock") { Feedback.shared.celebrate(); running = true }
+                    Button("Start the clock") {
+                        Feedback.shared.celebrate()
+                        running = true
+                        watch.start()
+                        Notifications.shared.scheduleTimerAlert(
+                            id: Self.alertID, after: total,
+                            title: "Time! ⏱", body: "\(minutes) minutes done. Log your rounds.")
+                    }
                         .buttonStyle(ChunkyButtonStyle())
                 } else if !finished {
                     Button {
@@ -269,14 +296,18 @@ struct AmrapView: View {
         }
         .onReceive(tick) { _ in
             guard running, !finished else { return }
-            elapsed += 1
+            watch.sync()
             if remaining == 60 { Feedback.shared.denied() }          // one minute warning
             if remaining == 0 {
                 finished = true
                 running = false
+                watch.pause()
                 Feedback.shared.celebrate()
+                Notifications.shared.cancelTimerAlert(id: Self.alertID)
             }
         }
+        .onChange(of: scenePhase) { _, phase in if phase == .active { watch.sync() } }
+        .onDisappear { Notifications.shared.cancelTimerAlert(id: Self.alertID) }
     }
 
     private func counter(_ value: String, _ label: String, _ color: Color) -> some View {
@@ -302,11 +333,19 @@ struct RoundsRunnerView: View {
     @State private var round = 1
     @State private var checked: Set<Int> = []
     @State private var resting = false
-    @State private var restLeft = 0
-    @State private var elapsed = 0
+    @State private var restEndsAt: Date?
+    @State private var watch = Stopwatch()
     @State private var roundStart = 0
     @State private var splits: [Int] = []
     private let tick = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
+    private static let alertID = "starterplan.timer.rounds"
+    @Environment(\.scenePhase) private var scenePhase
+
+    private var elapsed: Int { watch.elapsed }
+    private var restLeft: Int {
+        guard let end = restEndsAt else { return 0 }
+        return max(0, Int(end.timeIntervalSinceNow.rounded(.up)))
+    }
 
     var body: some View {
         ScrollView(showsIndicators: false) {
@@ -391,11 +430,12 @@ struct RoundsRunnerView: View {
             }
             .padding(20)
         }
+        .onAppear { watch.start() }
+        .onChange(of: scenePhase) { _, phase in if phase == .active { watch.sync() } }
+        .onDisappear { Notifications.shared.cancelTimerAlert(id: Self.alertID) }
         .onReceive(tick) { _ in
-            elapsed += 1
-            guard resting else { return }
-            restLeft -= 1
-            if restLeft <= 0 { endRest() }
+            watch.sync()
+            if resting && restLeft <= 0 { endRest() }
         }
     }
 
@@ -416,13 +456,18 @@ struct RoundsRunnerView: View {
             onFinish(round, elapsed, splits)
         } else {
             round += 1
-            restLeft = restSeconds
+            restEndsAt = Date().addingTimeInterval(TimeInterval(restSeconds))
+            Notifications.shared.scheduleTimerAlert(
+                id: Self.alertID, after: restSeconds,
+                title: "Round \(round) up", body: "Rest is done — back into it.")
             withAnimation { resting = true }
         }
     }
 
     private func endRest() {
         Feedback.shared.timerDone()
+        Notifications.shared.cancelTimerAlert(id: Self.alertID)
+        restEndsAt = nil
         withAnimation { resting = false }
         roundStart = elapsed
     }
@@ -438,12 +483,15 @@ struct ForTimeView: View {
     let brief: String
     let onFinish: (_ rounds: Int, _ seconds: Int, _ splits: [Int]) -> Void
 
-    @State private var elapsed = 0
+    @State private var watch = Stopwatch()
     @State private var running = false
     @State private var round = 0
     @State private var splits: [Int] = []
     @State private var lastAt = 0
     private let tick = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
+
+    private var elapsed: Int { watch.elapsed }
+    @Environment(\.scenePhase) private var scenePhaseForTime
 
     var body: some View {
         ScrollView(showsIndicators: false) {
@@ -482,7 +530,7 @@ struct ForTimeView: View {
                 if !brief.isEmpty { CoachNote(text: brief) }
 
                 if !running {
-                    Button("Go") { Feedback.shared.celebrate(); running = true }
+                    Button("Go") { Feedback.shared.celebrate(); running = true; watch.start() }
                         .buttonStyle(ChunkyButtonStyle())
                 } else {
                     Button {
@@ -492,6 +540,7 @@ struct ForTimeView: View {
                         lastAt = elapsed
                         if round >= roundCount {
                             running = false
+                            watch.pause()
                             Feedback.shared.celebrate()
                             onFinish(round, elapsed, splits)
                         }
@@ -508,6 +557,7 @@ struct ForTimeView: View {
                     Button("Stop here") {
                         Feedback.shared.tap()
                         running = false
+                        watch.pause()
                         onFinish(round, elapsed, splits)
                     }
                     .font(.system(size: 13, weight: .bold, design: .rounded))
@@ -539,6 +589,7 @@ struct ForTimeView: View {
             }
             .padding(20)
         }
-        .onReceive(tick) { _ in if running { elapsed += 1 } }
+        .onChange(of: scenePhaseForTime) { _, phase in if phase == .active { watch.sync() } }
+        .onReceive(tick) { _ in if running { watch.sync() } }
     }
 }
