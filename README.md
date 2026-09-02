@@ -8,54 +8,57 @@ Built with SwiftUI + SwiftData. No backend, no login, no third-party dependencie
 
 ## What's in it
 
-**The plan** — 4 weeks × 7 days, hardcoded:
+**Your plan is generated, not fixed.** Six short questions — goal, days per week, session length, equipment you can reach, muscles you want prioritised, anything you need to work around — and the app builds four weeks out of a tagged movement library. Change your mind any time in Settings; finished days are kept.
 
-| Day | Session |
-|-----|---------|
-| Mon | Strength A — Back Squat, Bench Press, Ring Rows, DB Shoulder Press, Plank |
-| Tue | Trail Cardio |
-| Wed | Rest |
-| Thu | Strength B — Romanian Deadlift, Banded/Jumping Pull-ups, DB Rows, Walking Lunges, Hollow Hold |
-| Fri | Conditioning (rotates each week) |
-| Sat | Optional Trail |
-| Sun | Rest |
-
-Friday conditioning rotation: Wk1 Scaled Cindy 12-min AMRAP · Wk2 5 rounds (goblet squats / push-ups / plank) · Wk3 Scaled Cindy 15-min · Wk4 3 rounds for time (squats / push-ups / 400m).
+Every movement in the library carries its primary and secondary muscles, its movement pattern, the equipment it needs, the joints it loads and how demanding it is. The generator picks a split for your days per week, fills each session's pattern slots with movements you can actually do, weights the picks toward what you said you cared about, applies your goal's sets and reps, and varies the choices week to week so week 3 doesn't read like week 1.
 
 **Features**
 
 - Winding path of day nodes joined by curved connectors — future days locked, current day pulses, completed days get a checkmark badge
 - Streak, XP and coin counters plus a weekly progress ring in the top bar
+- A mood check and three real sessions to choose between, every single day
+- Body maps showing what a movement works, what a session covers, and where your week's volume actually landed
 - A coach that picks your weights instead of asking you to guess (see below)
 - Linear session flow: set → rate the effort → rest → next set
 - Rest counts down, alarms at zero, then keeps counting your overtime — a long breather is logged, not punished
 - Mini-games during rest that hard-lock the second the timer runs out
 - Full-screen "Lesson Complete" celebration with confetti, XP count-up and what the coach changed
 - Plain-English how-to + form cue for every exercise via the info button
-- Daily reminder (9:00) and streak-at-risk warning (19:30) local notifications
+- Four reminders a day that stop the moment the day's session is done
 - History calendar with completed days highlighted, plus per-set weight, effort and rest logs
-- Settings: your details, rest arcade, notification and sound toggles, weight overrides, reset plan
+- Settings: your plan, your details, rest arcade, notification and sound toggles, weight overrides, reset plan
 
 ---
 
-## The coach
+## Which workout, not whether
 
-On first launch the app asks for age, height, body weight, sex (used only to scale starting loads) and lifting experience. From that it estimates a starting weight for every barbell and dumbbell lift, deliberately on the light side.
+Tapping today never asks "do you want to work out". It asks how you're feeling — Fresh, Normal, Low energy, Sore, No time — and then offers three real sessions shaped by that answer:
 
-After that it stops guessing and starts reading. Every set you log carries three things: the weight you actually used, how it felt (Easy / Just right / Hard / Couldn't finish) and how long you actually rested. Those drive the next suggestion:
-
-| What happened last session | What the coach does |
+| Mood | What you're offered |
 |---|---|
-| You couldn't finish a set | Drops two increments |
-| Sets graded hard, or you stopped short | Drops one increment |
-| You needed a lot of extra rest | Holds the weight until rest tightens up |
-| Everything felt easy | Adds two increments |
-| Two clean sessions in a row | Adds one increment |
-| Solid but not easy | Holds — one more clean session earns the jump |
+| Fresh | The plan, a bigger version with a conditioning finisher, a lighter option |
+| Normal | The plan, a trimmed version, easy cardio instead |
+| Low energy | The trimmed version first, easy cardio, the full plan |
+| Sore | Mobility to move it out, the trimmed version, the full plan |
+| No time | A two-movement express session, a twelve-minute burner, the full plan |
 
-It also reacts mid-workout: an easy first set bumps the weight before set 2, a failed set takes weight off the next one. Change the weight yourself any time — the coach reads what you actually lifted, not what it asked for.
+All three complete the day. There's no penalty for picking the small one, because a short session you actually do beats a perfect one you skip.
 
-The home screen shows a 0–100 read on how you're tracking against the estimate for your body, and surfaces cautions only when they apply to you (age, BMI, first-timer, a long streak with no rest day). It is not medical advice, and it says so.
+**Rest days work the same way.** Take the rest, or pick easy movers or a walk — both log as genuine sessions without costing you tomorrow.
+
+**And you can always do more.** The "something extra" card sits on the home screen every day, including after the day's session is done. Tap the muscles you feel like working, pick 15, 25 or 40 minutes, and the app builds a session around them. Extras earn full credit and never move the plan, so wanting to train more is rewarded while cramming a week into one afternoon still isn't.
+
+---
+
+## Body maps
+
+A front-and-back figure with every muscle group drawn separately, used in three places:
+
+- **Exercise info** — what this movement mainly works, and what it also hits
+- **Session cards** — a thumbnail of everything a session covers, so you can see at a glance whether it's a leg day
+- **History** — a heat map of the last seven days' volume, which calls out what you've been quietly neglecting
+
+It's also the input control: you pick your focus muscles by tapping the body, both in setup and when building an extra session.
 
 ---
 
