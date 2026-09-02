@@ -21,6 +21,8 @@ struct HistoryView: View {
                     summaryTile("bolt.fill", "\(store.profile.xp)", "Total XP", Theme.accent)
                 }
 
+                WeeklyBodyReport()
+
                 calendar
 
                 if store.logs.isEmpty {
@@ -142,7 +144,7 @@ struct HistoryView: View {
     }
 
     private func logRow(_ log: DayLog) -> some View {
-        let day = Plan.day(at: log.dayIndex)
+        let day = store.day(at: log.dayIndex)
         return HStack(spacing: 14) {
             Image(systemName: day.kind.icon)
                 .font(.system(size: 16, weight: .bold))
@@ -150,7 +152,7 @@ struct HistoryView: View {
                 .frame(width: 40, height: 40)
                 .background(Circle().fill(Theme.surfaceHigh))
             VStack(alignment: .leading, spacing: 2) {
-                Text(day.kind.title)
+                Text(day.title)
                     .font(.system(size: 15, weight: .heavy, design: .rounded))
                     .foregroundStyle(Theme.text)
                 Text("Week \(day.week) · \(log.completedOn.formatted(.dateTime.month().day()))")
@@ -203,7 +205,7 @@ struct DayDetailSheet: View {
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
-        let day = Plan.day(at: log.dayIndex)
+        let day = store.day(at: log.dayIndex)
         let records = store.records(forDay: log.dayIndex)
         let runs = store.cardioSessions(forDay: log.dayIndex)
         let conds = store.conditioningResults(forDay: log.dayIndex)
@@ -212,7 +214,7 @@ struct DayDetailSheet: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(day.kind.title)
+                    Text(day.title)
                         .font(.system(size: 26, weight: .black, design: .rounded))
                         .foregroundStyle(Theme.text)
                     Text("Week \(day.week) · \(day.weekdayName) · \(log.completedOn.formatted(date: .abbreviated, time: .shortened))")
@@ -291,7 +293,7 @@ struct DayDetailSheet: View {
                                 .frame(width: 30, height: 30)
                                 .background(Circle().fill(effortColor(r.effort).opacity(0.15)))
                             VStack(alignment: .leading, spacing: 2) {
-                                Text("\(Plan.exercise(id: r.exerciseID)?.name ?? r.exerciseID) · set \(r.setNumber)")
+                                Text("\(Library.exercise(id: r.exerciseID)?.name ?? r.exerciseID) · set \(r.setNumber)")
                                     .font(.system(size: 14, weight: .heavy, design: .rounded))
                                     .foregroundStyle(Theme.text)
                                 Text(detailLine(r))
@@ -317,7 +319,7 @@ struct DayDetailSheet: View {
                     ForEach(entries, id: \.exerciseID) { e in
                         HStack {
                             VStack(alignment: .leading, spacing: 2) {
-                                Text(Plan.exercise(id: e.exerciseID)?.name ?? e.exerciseID)
+                                Text(Library.exercise(id: e.exerciseID)?.name ?? e.exerciseID)
                                     .font(.system(size: 15, weight: .heavy, design: .rounded))
                                     .foregroundStyle(Theme.text)
                                 Text("\(e.setsCompleted) sets completed")

@@ -142,7 +142,7 @@ struct BodyProfileForm: View {
         p.bodyWeightLb = weight
         p.sex = sex
         p.experience = experience
-        guard let squat = Plan.strengthA.first(where: { $0.id == "back_squat" }) else { return 0 }
+        guard let squat = Library.exercise(id: "goblet_squat") else { return 0 }
         return Coach.baseline(for: squat, profile: p)
     }
 

@@ -62,7 +62,19 @@ struct WorkoutView: View {
             VStack(spacing: 0) {
                 header
 
-                if isBonus {
+                if day.isExtra {
+                    HStack(spacing: 8) {
+                        Image(systemName: "plus.circle.fill").foregroundStyle(Theme.teal)
+                        Text("Extra session — full credit, and your plan stays exactly where it is.")
+                            .font(.system(size: 12, weight: .heavy, design: .rounded))
+                            .foregroundStyle(Theme.text)
+                        Spacer(minLength: 0)
+                    }
+                    .padding(.horizontal, 14).padding(.vertical, 10)
+                    .background(RoundedRectangle(cornerRadius: 12).fill(Theme.teal.opacity(0.14)))
+                    .padding(.horizontal, 20)
+                    .padding(.bottom, 10)
+                } else if isBonus {
                     HStack(spacing: 8) {
                         Image(systemName: "clock.badge.exclamationmark.fill").foregroundStyle(Theme.gold)
                         Text("Bonus session — half XP, and your plan stays where it is.")
@@ -218,7 +230,7 @@ struct WorkoutView: View {
     // MARK: Setup
 
     private func prepare() {
-        isBonus = store.isBonusDay(day.index)
+        isBonus = !day.isExtra && store.isBonusDay(day.index)
         for ex in exercises {
             guard case .reps = ex.modality else { continue }
             let s = Coach.suggestion(for: ex, store: store)
@@ -244,7 +256,7 @@ struct WorkoutView: View {
 
                 Spacer()
                 VStack(spacing: 1) {
-                    Text(day.kind.title)
+                    Text(day.title)
                         .font(.system(size: 15, weight: .heavy, design: .rounded))
                         .foregroundStyle(Theme.text)
                     Text(phaseCaption)
@@ -445,7 +457,9 @@ struct WorkoutView: View {
         for ex in exercises {
             results[ex.id] = (sets: doneSets[ex.id] ?? 0, weight: weights[ex.id] ?? 0)
         }
-        let xp = store.completeDay(day, results: results, bonus: isBonus)
+        let xp = day.isExtra
+            ? store.completeExtra(day, results: results)
+            : store.completeDay(day, results: results, bonus: isBonus)
 
         // Lump sum for finishing the whole session.
         var bonus = day.kind.isRest ? 5 : 15
@@ -465,7 +479,7 @@ struct WorkoutView: View {
         onFinish(CelebrationPayload(xp: xp,
                                     coins: coinsEarned + bonus,
                                     streak: store.profile.streak,
-                                    dayTitle: day.kind.title,
+                                    dayTitle: day.title,
                                     setsDone: doneSets.values.reduce(0, +),
                                     notes: notes,
                                     wasBonus: isBonus))

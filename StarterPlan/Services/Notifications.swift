@@ -30,21 +30,21 @@ final class Notifications {
              title: { _ in "Lunchtime check-in 🍽️" },
              body: { store, day in
                  store.profile.streak > 0
-                     ? "\(store.profile.streak) day streak still needs \(day.kind.title.lowercased())."
-                     : "\(day.kind.title) is still waiting. Twenty minutes is enough."
+                     ? "\(store.profile.streak) day streak still needs \(day.title.lowercased())."
+                     : "\(day.title) is still waiting. Twenty minutes is enough."
              }),
         Slot(hour: 15, minute: 30,
              title: { _ in "Still time for it" },
              body: { _, day in
                  day.kind.isRest
                      ? "Two taps to bank the rest day."
-                     : "\(day.kind.title) hasn't happened yet. Get it done before the evening slump."
+                     : "\(day.title) hasn't happened yet. Get it done before the evening slump."
              }),
         Slot(hour: 19, minute: 30,
              title: { _ in "Don't break your streak 🔥" },
              body: { store, day in
                  store.profile.streak > 1
-                     ? "\(store.profile.streak) days in a row. \(day.kind.title) is all that's left today."
+                     ? "\(store.profile.streak) days in a row. \(day.title) is all that's left today."
                      : "One session tonight and the streak starts climbing."
              })
     ]
@@ -135,15 +135,15 @@ final class Notifications {
 
             // If they stay on plan it's head + offset; if they miss a day the app
             // rebuilds this list on next launch, so a slip self-corrects.
-            let index = min(head + offset, Plan.days.count - 1)
-            let day = Plan.day(at: index)
+            let index = min(head + offset, store.planLength - 1)
+            let day = store.day(at: index)
 
             for slot in slots {
                 guard let fire = cal.date(bySettingHour: slot.hour, minute: slot.minute, second: 0, of: dayDate),
                       fire > now else { continue }
 
                 let content = UNMutableNotificationContent()
-                content.title = slot.title(day.kind.title)
+                content.title = slot.title(day.title)
                 content.body = slot.body(store, day)
                 content.sound = .default            // always audible
                 content.interruptionLevel = .timeSensitive

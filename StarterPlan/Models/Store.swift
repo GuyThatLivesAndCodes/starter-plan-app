@@ -27,6 +27,15 @@ final class Profile {
     var coins: Int = 0
     var unlockedGamesRaw: String = "tap_rush"     // comma separated game ids
 
+    // Training preferences — what the plan gets generated from.
+    var planBuilt: Bool = false
+    var goalRaw: String = TrainingGoal.general.rawValue
+    var daysPerWeek: Int = 4
+    var sessionMinutes: Int = 45
+    var equipmentRaw: String = "bodyweight,dumbbells"
+    var focusRaw: String = ""
+    var avoidRaw: String = ""
+
     var sex: BodySex {
         get { BodySex(rawValue: sexRaw) ?? .unspecified }
         set { sexRaw = newValue.rawValue }
@@ -39,6 +48,26 @@ final class Profile {
         get { Set(unlockedGamesRaw.split(separator: ",").map(String.init)) }
         set { unlockedGamesRaw = newValue.sorted().joined(separator: ",") }
     }
+    var preferences: TrainingPreferences {
+        get {
+            TrainingPreferences(
+                goal: TrainingGoal(rawValue: goalRaw) ?? .general,
+                daysPerWeek: daysPerWeek,
+                sessionMinutes: sessionMinutes,
+                equipment: Set(equipmentRaw.split(separator: ",").compactMap { Equipment(rawValue: String($0)) }),
+                focus: Set(focusRaw.split(separator: ",").compactMap { Muscle(rawValue: String($0)) }),
+                avoid: Set(avoidRaw.split(separator: ",").compactMap { JointStress(rawValue: String($0)) }))
+        }
+        set {
+            goalRaw = newValue.goal.rawValue
+            daysPerWeek = newValue.daysPerWeek
+            sessionMinutes = newValue.sessionMinutes
+            equipmentRaw = newValue.equipment.map(\.rawValue).sorted().joined(separator: ",")
+            focusRaw = newValue.focus.map(\.rawValue).sorted().joined(separator: ",")
+            avoidRaw = newValue.avoid.map(\.rawValue).sorted().joined(separator: ",")
+        }
+    }
+
     var hasBody: Bool { age > 0 && heightIn > 0 && bodyWeightLb > 0 }
     var bmi: Double {
         guard heightIn > 0 else { return 0 }
@@ -265,6 +294,58 @@ final class ConditioningResult {
     }
 }
 
+/// One generated slot of the 28-day plan. Exercises are stored as ids with the
+/// sets and scheme the generator chose, then rehydrated from the library.
+@Model
+final class PlanDay {
+    @Attribute(.unique) var index: Int
+    var kindRaw: String
+    var specsRaw: String        // "id|sets|scheme;id|sets|scheme"
+    var note: String?
+
+    init(index: Int, kindRaw: String, specsRaw: String, note: String?) {
+        self.index = index
+        self.kindRaw = kindRaw
+        self.specsRaw = specsRaw
+        self.note = note
+    }
+
+    var kind: DayKind { DayKind(rawValue: kindRaw) ?? .rest }
+
+    var exercises: [Exercise] {
+        specsRaw.split(separator: ";").compactMap { spec in
+            let parts = spec.split(separator: "|", omittingEmptySubsequences: false)
+            guard let base = Library.exercise(id: String(parts[0])) else { return nil }
+            guard parts.count >= 3, let sets = Int(parts[1]) else { return base }
+            return base.adjusted(sets: sets, scheme: String(parts[2]))
+        }
+    }
+
+    static func spec(for exercises: [Exercise]) -> String {
+        exercises.map { "\($0.id)|\($0.sets)|\($0.scheme)" }.joined(separator: ";")
+    }
+}
+
+/// A session done outside the plan — rest-day movers, or a second helping.
+@Model
+final class ExtraSession {
+    var date: Date
+    var title: String
+    var xpEarned: Int
+    var musclesRaw: String
+    var minutes: Int
+
+    init(date: Date = .now, title: String, xpEarned: Int, muscles: [Muscle], minutes: Int) {
+        self.date = date
+        self.title = title
+        self.xpEarned = xpEarned
+        self.musclesRaw = muscles.map(\.rawValue).joined(separator: ",")
+        self.minutes = minutes
+    }
+
+    var muscles: [Muscle] { musclesRaw.split(separator: ",").compactMap { Muscle(rawValue: String($0)) } }
+}
+
 /// A plan day done ahead of schedule. Worth half credit and, deliberately, it
 /// does not move the plan forward — you can't bank a week in one afternoon.
 @Model
@@ -289,6 +370,8 @@ final class Store {
     private(set) var completed: Set<Int> = []
     private(set) var logs: [DayLog] = []
     private(set) var bonuses: [BonusSession] = []
+    private(set) var extras: [ExtraSession] = []
+    private(set) var days: [WorkoutDay] = []
 
     init(context: ModelContext) {
         self.context = context
@@ -306,17 +389,59 @@ final class Store {
     func reload() {
         logs = (try? context.fetch(FetchDescriptor<DayLog>(sortBy: [SortDescriptor(\.dayIndex)]))) ?? []
         bonuses = (try? context.fetch(FetchDescriptor<BonusSession>(sortBy: [SortDescriptor(\.date)]))) ?? []
+        extras = (try? context.fetch(FetchDescriptor<ExtraSession>(sortBy: [SortDescriptor(\.date)]))) ?? []
+        loadPlan()
         completed = Set(logs.map(\.dayIndex))
         recomputeStreak()
     }
 
-    // The furthest day the user is allowed to open: first uncompleted day.
-    var currentDayIndex: Int {
-        for i in 0..<Plan.days.count where !completed.contains(i) { return i }
-        return Plan.days.count - 1
+    // MARK: The generated plan
+
+    private func loadPlan() {
+        let rows = (try? context.fetch(FetchDescriptor<PlanDay>(sortBy: [SortDescriptor(\.index)]))) ?? []
+        guard !rows.isEmpty else {
+            // No plan yet — fall back to a sensible default so the app is never empty.
+            days = PlanGenerator.build(profile.preferences, experience: profile.experience)
+            return
+        }
+        days = rows.map { row in
+            WorkoutDay(week: row.index / 7 + 1, day: row.index % 7 + 1,
+                       kind: row.kind, exercises: row.exercises, note: row.note)
+        }
     }
 
-    var isPlanFinished: Bool { completed.count == Plan.days.count }
+    func day(at index: Int) -> WorkoutDay {
+        guard !days.isEmpty else {
+            return WorkoutDay(week: 1, day: 1, kind: .rest, exercises: [], note: nil)
+        }
+        return days[min(max(index, 0), days.count - 1)]
+    }
+
+    var planLength: Int { max(days.count, 1) }
+
+    /// Regenerates the whole plan from the questionnaire. Progress is kept —
+    /// only the contents of future days change.
+    func buildPlan(_ prefs: TrainingPreferences) {
+        profile.preferences = prefs
+        profile.planBuilt = true
+
+        for row in (try? context.fetch(FetchDescriptor<PlanDay>())) ?? [] { context.delete(row) }
+        let generated = PlanGenerator.build(prefs, experience: profile.experience)
+        for d in generated {
+            context.insert(PlanDay(index: d.index, kindRaw: d.kind.rawValue,
+                                   specsRaw: PlanDay.spec(for: d.exercises), note: d.note))
+        }
+        try? context.save()
+        reload()
+    }
+
+    // The furthest day the user is allowed to open: first uncompleted day.
+    var currentDayIndex: Int {
+        for i in 0..<planLength where !completed.contains(i) { return i }
+        return planLength - 1
+    }
+
+    var isPlanFinished: Bool { completed.count >= planLength }
 
     func isComplete(_ index: Int) -> Bool { completed.contains(index) }
 
@@ -495,6 +620,44 @@ final class Store {
         try? context.save()
     }
 
+    /// Logs a session that isn't part of the plan. Full credit — it isn't
+    /// stealing from a future day, it's genuinely extra work.
+    @discardableResult
+    func completeExtra(_ day: WorkoutDay, results: [String: (sets: Int, weight: Double)]) -> Int {
+        var xp = 0
+        for ex in day.exercises {
+            let r = results[ex.id] ?? (sets: ex.sets, weight: 0)
+            xp += r.sets * 8
+            let st = state(for: ex.id)
+            if r.weight > 0 { st.lastWeight = r.weight }
+        }
+        xp = max(15, xp)
+        let muscles = Array(Set(day.exercises.flatMap(\.primary)))
+        context.insert(ExtraSession(title: day.title, xpEarned: xp,
+                                    muscles: muscles, minutes: day.estimatedMinutes))
+        profile.xp += xp
+        profile.lastCompletedDay = .now
+        try? context.save()
+        reload()
+        return xp
+    }
+
+    /// Weekly volume per muscle, for the body heat map. Counts everything.
+    func muscleVolume(days back: Int = 7) -> [Muscle: Double] {
+        let cutoff = Calendar.current.date(byAdding: .day, value: -back, to: .now) ?? .now
+        var out: [Muscle: Double] = [:]
+
+        for record in allRecords() where record.date >= cutoff {
+            guard let ex = Library.exercise(id: record.exerciseID) else { continue }
+            for m in ex.primary { out[m, default: 0] += 1 }
+            for m in ex.secondary { out[m, default: 0] += 0.4 }
+        }
+        for extra in extras where extra.date >= cutoff {
+            for m in extra.muscles { out[m, default: 0] += 2 }
+        }
+        return out
+    }
+
     func isUnlocked(game id: String) -> Bool { profile.unlockedGames.contains(id) }
 
     @discardableResult
@@ -566,7 +729,7 @@ final class Store {
 
     private func recomputeStreak() {
         let cal = Calendar.current
-        let active = logs.map(\.completedOn) + bonuses.map(\.date)
+        let active = logs.map(\.completedOn) + bonuses.map(\.date) + extras.map(\.date)
         let days = Set(active.map { cal.startOfDay(for: $0) }).sorted(by: >)
         guard let latest = days.first else { profile.streak = 0; return }
 
@@ -609,6 +772,7 @@ final class Store {
         for c in (try? context.fetch(FetchDescriptor<CardioSession>())) ?? [] { context.delete(c) }
         for c in (try? context.fetch(FetchDescriptor<ConditioningResult>())) ?? [] { context.delete(c) }
         for b in (try? context.fetch(FetchDescriptor<BonusSession>())) ?? [] { context.delete(b) }
+        for e in (try? context.fetch(FetchDescriptor<ExtraSession>())) ?? [] { context.delete(e) }
         for s in (try? context.fetch(FetchDescriptor<ExerciseState>())) ?? [] {
             s.cardioLowMin = 0; s.cardioHighMin = 0; s.holdTarget = 0; s.bestRounds = 0
         }

@@ -8,7 +8,7 @@ struct StarterPlanApp: App {
     @Environment(\.scenePhase) private var scenePhase
 
     init() {
-        let container = try! ModelContainer(for: Profile.self, DayLog.self, ExerciseState.self, SessionEntry.self, SetRecord.self, CardioSession.self, ConditioningResult.self, BonusSession.self)
+        let container = try! ModelContainer(for: Profile.self, DayLog.self, ExerciseState.self, SessionEntry.self, SetRecord.self, CardioSession.self, ConditioningResult.self, BonusSession.self, PlanDay.self, ExtraSession.self)
         self.container = container
         let store = Store(context: ModelContext(container))
         Feedback.shared.soundEnabled = store.profile.soundEnabled

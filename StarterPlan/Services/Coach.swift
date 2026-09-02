@@ -32,23 +32,39 @@ enum Coach {
     /// Deliberately conservative — the algorithm walks it up from real feedback.
     private static let bodyweightRatio: [String: Double] = [
         "back_squat": 0.55,
+        "goblet_squat": 0.25,
+        "kb_front_squat": 0.22,
         "bench_press": 0.45,
-        "db_shoulder_press": 0.15,   // per hand
+        "db_bench": 0.18,            // per hand
         "rdl": 0.60,
-        "db_rows": 0.18              // per hand
+        "db_rdl": 0.22,              // per hand
+        "kb_swing": 0.20,
+        "db_shoulder_press": 0.15,   // per hand
+        "lateral_raise": 0.05,       // per hand
+        "db_rows": 0.18,             // per hand
+        "db_curl": 0.09,             // per hand
+        "step_up": 0.15,             // per hand
+        "walking_lunges": 0.15,      // per hand
+        "split_squat": 0.15,         // per hand
+        "farmer_carry": 0.30         // per hand
     ]
 
-    static let perSideLifts: Set<String> = ["db_shoulder_press", "db_rows"]
+    static let perSideLifts: Set<String> = [
+        "db_shoulder_press", "db_rows", "db_bench", "db_rdl", "db_curl",
+        "lateral_raise", "step_up", "walking_lunges", "split_squat", "farmer_carry"
+    ]
 
     /// Rest the app asks for between sets, in seconds.
     static func restTarget(for exercise: Exercise, profile: Profile) -> Int {
-        let base: Int
-        switch exercise.id {
-        case "back_squat", "rdl", "bench_press": base = 120
-        case "db_shoulder_press", "db_rows", "walking_lunges", "pullups": base = 90
-        default: base = 60
+        // The goal sets the baseline; big compound lifts earn a little more.
+        var base = profile.preferences.goal.restSeconds
+        switch exercise.pattern {
+        case .squat, .hinge: base += 20
+        case .core, .mobility, .carry: base -= 20
+        default: break
         }
-        var seconds = base
+        if exercise.difficulty >= 3 { base += 15 }
+        var seconds = max(30, base)
         if profile.experience == .beginner { seconds += 15 }
         if profile.age >= 50 { seconds += 15 }
         return seconds
@@ -428,7 +444,7 @@ enum Coach {
                            ratio: 0)
         }
 
-        let lifts = (Plan.strengthA + Plan.strengthB).filter(\.tracksWeight)
+        let lifts = Library.all.filter { $0.tracksWeight && $0.pattern != .cardio }
         var ratios: [Double] = []
         for lift in lifts {
             let base = baseline(for: lift, profile: profile)
@@ -441,7 +457,7 @@ enum Coach {
 
         let finished = records.filter { $0.effort != .failed }.count
         let consistency = Double(finished) / Double(max(records.count, 1))
-        let planProgress = Double(store.completed.count) / Double(Plan.days.count)
+        let planProgress = Double(store.completed.count) / Double(store.planLength)
 
         let raw = min(1.4, loadRatio) / 1.4 * 55 + consistency * 25 + planProgress * 20
         let score = max(0, min(100, Int(raw.rounded())))

@@ -6,6 +6,7 @@ struct SettingsView: View {
     @State private var editingWeights = false
     @State private var editingProfile = false
     @State private var showArcade = false
+    @State private var showPlanSetup = false
 
     var body: some View {
         ScrollView(showsIndicators: false) {
@@ -14,6 +15,15 @@ struct SettingsView: View {
                     .font(.system(size: 26, weight: .black, design: .rounded))
                     .foregroundStyle(Theme.text)
                     .frame(maxWidth: .infinity, alignment: .leading)
+
+                Button {
+                    Feedback.shared.tap(); showPlanSetup = true
+                } label: {
+                    row(icon: "list.bullet.rectangle.fill", title: "Your plan",
+                        subtitle: planSubtitle, color: Theme.accent, chevron: true)
+                }
+                .buttonStyle(.plain)
+                .card(Theme.surface)
 
                 Button {
                     Feedback.shared.tap(); editingProfile = true
@@ -79,6 +89,7 @@ struct SettingsView: View {
         }
         .sheet(isPresented: $editingWeights) { WeightEditor() }
         .sheet(isPresented: $editingProfile) { BodyProfileForm(isOnboarding: false) }
+        .fullScreenCover(isPresented: $showPlanSetup) { PlanSetupView(isOnboarding: false) }
         .sheet(isPresented: $showArcade) { GameShopView() }
         .alert("Reset everything?", isPresented: $showReset) {
             Button("Cancel", role: .cancel) {}
@@ -86,6 +97,11 @@ struct SettingsView: View {
         } message: {
             Text("Your streak, XP, coins and every logged set will be cleared. Your details and unlocked games stay.")
         }
+    }
+
+    private var planSubtitle: String {
+        let p = store.profile.preferences
+        return "\(p.goal.label) · \(p.daysPerWeek) days · \(p.sessionMinutes) min"
     }
 
     private var profileSubtitle: String {
@@ -139,7 +155,7 @@ struct WeightEditor: View {
     @Environment(Store.self) private var store
     @Environment(\.dismiss) private var dismiss
 
-    private var lifts: [Exercise] { (Plan.strengthA + Plan.strengthB).filter(\.tracksWeight) }
+    private var lifts: [Exercise] { Library.all.filter { $0.tracksWeight && $0.pattern != .cardio } }
 
     var body: some View {
         ScrollView {

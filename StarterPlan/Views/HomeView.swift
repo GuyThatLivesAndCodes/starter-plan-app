@@ -6,6 +6,10 @@ struct HomeView: View {
     @State private var celebration: CelebrationPayload?
     @State private var showOnboarding = false
     @State private var bonusPrompt: WorkoutDay?
+    @State private var choosing: WorkoutDay?
+    @State private var showFreestyle = false
+    @State private var showPlanSetup = false
+    @State private var extraSession: WorkoutDay?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -23,7 +27,7 @@ struct HomeView: View {
                                 .padding(.bottom, 6)
 
                             ForEach(0..<7, id: \.self) { d in
-                                let day = Plan.day(at: (week - 1) * 7 + d)
+                                let day = store.day(at: (week - 1) * 7 + d)
                                 PathNode(day: day,
                                          state: nodeState(day.index),
                                          dateLabel: store.dateLabel(for: day.index),
@@ -36,6 +40,11 @@ struct HomeView: View {
                                 .id(day.index)
                             }
                         }
+
+                        AddSessionCard(alreadyDone: store.todaysSessionDone) {
+                            Feedback.shared.tap(); showFreestyle = true
+                        }
+                        .padding(.top, 26)
 
                         if store.isPlanFinished { FinishedBanner().padding(.top, 28) }
                         Color.clear.frame(height: 110)
@@ -59,11 +68,32 @@ struct HomeView: View {
         .fullScreenCover(isPresented: $showOnboarding) {
             BodyProfileForm(isOnboarding: true)
         }
+        .fullScreenCover(isPresented: $showPlanSetup) {
+            PlanSetupView(isOnboarding: true)
+        }
+        .fullScreenCover(item: $choosing) { day in
+            SessionChoiceView(day: day) { picked in
+                choosing = nil
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { openDay = picked }
+            }
+        }
+        .sheet(isPresented: $showFreestyle) {
+            FreestyleView { session in
+                showFreestyle = false
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { extraSession = session }
+            }
+        }
+        .fullScreenCover(item: $extraSession) { session in
+            WorkoutView(day: session) { payload in
+                extraSession = nil
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { celebration = payload }
+            }
+        }
         .alert("Get ahead?", isPresented: Binding(get: { bonusPrompt != nil },
                                                   set: { if !$0 { bonusPrompt = nil } })) {
             Button("Not today", role: .cancel) { bonusPrompt = nil }
             Button("Do it anyway") {
-                if let d = bonusPrompt { openDay = d }
+                if let d = bonusPrompt { choosing = d }
                 bonusPrompt = nil
             }
         } message: {
@@ -71,13 +101,17 @@ struct HomeView: View {
         }
         .onAppear {
             if !store.profile.onboarded { showOnboarding = true }
+            else if !store.profile.planBuilt { showPlanSetup = true }
+        }
+        .onChange(of: store.profile.onboarded) { _, done in
+            if done && !store.profile.planBuilt { showPlanSetup = true }
         }
     }
 
     private func tap(_ day: WorkoutDay) {
         guard store.isUnlocked(day.index) else { Feedback.shared.denied(); return }
         Feedback.shared.tap()
-        if store.isBonusDay(day.index) { bonusPrompt = day } else { openDay = day }
+        if store.isBonusDay(day.index) { bonusPrompt = day } else { choosing = day }
     }
 
     private func nodeState(_ index: Int) -> NodeState {
@@ -242,7 +276,7 @@ struct PathNode: View {
                 Text(dateLabel.uppercased())
                     .font(.system(size: 10, weight: .black, design: .rounded))
                     .foregroundStyle(isToday ? Theme.accent : Theme.textDim.opacity(state == .locked ? 0.5 : 0.9))
-                Text(day.kind.title)
+                Text(day.title)
                     .font(.system(size: 12, weight: .heavy, design: .rounded))
                     .foregroundStyle(state == .locked ? Theme.textDim.opacity(0.6) : Theme.text)
                 if bonusRuns > 0 {
@@ -341,7 +375,7 @@ struct CoachSummaryCard: View {
                             .foregroundStyle(store.todaysSessionDone ? Theme.accent : Theme.gold)
                         Text(store.todaysSessionDone
                              ? "Today's session is done. Anything else today is a bonus."
-                             : "Today: \(Plan.day(at: store.todaysIndex).kind.title)")
+                             : "Today: \(store.day(at: store.todaysIndex).title)")
                             .font(.system(size: 12, weight: .heavy, design: .rounded))
                             .foregroundStyle(Theme.textDim)
                         Spacer(minLength: 0)
@@ -379,6 +413,37 @@ struct CoachSummaryCard: View {
                 .sheet(isPresented: $showProfile) { BodyProfileForm(isOnboarding: false) }
             }
         }
+    }
+}
+
+/// Always-available way to do more, without touching the plan.
+struct AddSessionCard: View {
+    let alreadyDone: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 14) {
+                Image(systemName: "plus.circle.fill")
+                    .font(.system(size: 22))
+                    .foregroundStyle(Theme.teal)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(alreadyDone ? "Want to do more?" : "Something extra?")
+                        .font(.system(size: 15, weight: .heavy, design: .rounded))
+                        .foregroundStyle(Theme.text)
+                    Text("Build a session around whatever you feel like working. Logged in full, plan untouched.")
+                        .font(.system(size: 12, weight: .medium, design: .rounded))
+                        .foregroundStyle(Theme.textDim)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .multilineTextAlignment(.leading)
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(16)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .card(Theme.surface)
+        }
+        .buttonStyle(.plain)
     }
 }
 

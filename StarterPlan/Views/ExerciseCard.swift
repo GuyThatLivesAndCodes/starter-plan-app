@@ -147,6 +147,16 @@ struct ExerciseInfoSheet: View {
                         .foregroundStyle(Theme.accent)
                 }
 
+                VStack(alignment: .leading, spacing: 10) {
+                    Label("What it works", systemImage: "figure.arms.open")
+                        .font(.system(size: 14, weight: .heavy, design: .rounded))
+                        .foregroundStyle(Theme.accent)
+                    ExerciseBodyMap(exercise: exercise)
+                }
+                .padding(18)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .card(Theme.surface)
+
                 block(icon: "figure.strengthtraining.traditional", title: "How to do it", body: exercise.howTo, color: Theme.teal)
                 block(icon: "lightbulb.fill", title: "Form cue", body: exercise.cue, color: Theme.gold)
 
