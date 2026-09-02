@@ -59,6 +59,24 @@ The home screen shows a 0–100 read on how you're tracking against the estimate
 
 ---
 
+## The schedule slides
+
+The plan is a queue, not a fixed calendar. Whatever comes next is always dated **today**, and everything behind it sits one day per day after that. Nodes on the path show when they're due — Today, Tomorrow, a weekday — and completed ones show the date you actually did them.
+
+Miss a day and nothing is lost or skipped: Tuesday's session simply becomes Wednesday's, and the rest of the plan shifts with it.
+
+Working ahead is allowed but deliberately unrewarding. Once today's session is logged, later days unlock as **bonus sessions**: half XP, half coins, and the plan does *not* advance — that day is still owed on its own date. You get a confirmation before starting one, a banner during it, and a note on the finish screen. So you can't bank a week on Monday and coast.
+
+Your streak counts any day you did work, bonus sessions included.
+
+---
+
+## Reminders
+
+Four nudges a day at 10:30, 12:30, 15:30 and 19:30, each with sound, each naming the session that's waiting. The moment you log the day's session the rest of that day's nudges are cancelled — it never pesters you about something you've already done. The schedule is rebuilt on launch, whenever the app comes to the foreground, and on completion, so a missed day self-corrects.
+
+---
+
 ## Every activity gets its own screen
 
 Nothing in the plan is a generic checkbox list. Each exercise declares how it's actually performed, and the app opens the screen built for it.
