@@ -7,7 +7,7 @@ struct StarterPlanApp: App {
     @State private var store: Store
 
     init() {
-        let container = try! ModelContainer(for: Profile.self, DayLog.self, ExerciseState.self, SessionEntry.self, SetRecord.self)
+        let container = try! ModelContainer(for: Profile.self, DayLog.self, ExerciseState.self, SessionEntry.self, SetRecord.self, CardioSession.self, ConditioningResult.self)
         self.container = container
         let store = Store(context: ModelContext(container))
         Feedback.shared.soundEnabled = store.profile.soundEnabled

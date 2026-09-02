@@ -34,6 +34,21 @@ struct WorkoutView: View {
     @State private var infoExercise: Exercise?
     @State private var toast: String?
     @State private var coachNote: String?
+    @State private var reps = 0
+    @State private var heldSeconds = 0
+    @State private var pendingRun: PendingRun?
+    @State private var pendingCond: PendingCond?
+    @State private var effortsThisExercise: [Effort] = []
+    @State private var activityNotes: [String] = []
+
+    struct PendingRun {
+        var seconds: Int; var meters: Double; var splits: [Double]
+        var autoPauses: Int; var pausedSeconds: Int; var usedLocation: Bool
+        var low: Int; var high: Int
+    }
+    struct PendingCond {
+        var rounds: Int; var partial: Int; var seconds: Int; var splits: [Int]
+    }
 
     private var exercises: [Exercise] { day.exercises }
     private var current: Exercise? { exercises.indices.contains(exerciseIndex) ? exercises[exerciseIndex] : nil }
@@ -51,28 +66,12 @@ struct WorkoutView: View {
                 } else if let ex = current {
                     switch phase {
                     case .lift:
-                        ScrollView(showsIndicators: false) {
-                            VStack(spacing: 14) {
-                                if let s = suggestions[ex.id] { CoachBanner(suggestion: s) }
-                                ExerciseCard(exercise: ex,
-                                             currentSet: setNumber,
-                                             setsDone: doneSets[ex.id] ?? 0,
-                                             weight: Binding(get: { weights[ex.id] ?? 0 },
-                                                             set: { weights[ex.id] = $0 }),
-                                             perSide: Coach.perSideLifts.contains(ex.id),
-                                             onInfo: { infoExercise = ex })
-                                if let note = coachNote { CoachNote(text: note) }
-                                ForEach(Coach.warnings(store: store, exercise: ex).prefix(2)) { w in
-                                    WarningRow(warning: w)
-                                }
-                                Color.clear.frame(height: 12)
-                            }
-                            .padding(20)
-                        }
-                        footer
+                        activityScreen(for: ex)
 
                     case .rate:
-                        EffortPicker(exercise: ex, setNumber: setNumber) { effort in
+                        EffortPicker(exercise: ex,
+                                     setNumber: setNumber,
+                                     wholeActivity: pendingRun != nil || pendingCond != nil) { effort in
                             record(effort: effort, for: ex)
                         }
 
@@ -104,14 +103,112 @@ struct WorkoutView: View {
         .onAppear(perform: prepare)
     }
 
+    // MARK: Per-activity screens
+
+    @ViewBuilder
+    private func activityScreen(for ex: Exercise) -> some View {
+        switch ex.modality {
+        case .reps:
+            ScrollView(showsIndicators: false) {
+                VStack(spacing: 14) {
+                    if let s = suggestions[ex.id] { CoachBanner(suggestion: s) }
+                    ExerciseCard(exercise: ex,
+                                 currentSet: setNumber,
+                                 setsDone: doneSets[ex.id] ?? 0,
+                                 weight: Binding(get: { weights[ex.id] ?? 0 },
+                                                 set: { weights[ex.id] = $0 }),
+                                 perSide: Coach.perSideLifts.contains(ex.id),
+                                 onInfo: { infoExercise = ex })
+                    if !ex.tracksWeight && ex.repTarget > 0 {
+                        RepTallyView(exercise: ex, target: ex.repTarget, reps: $reps)
+                    }
+                    if let note = coachNote { CoachNote(text: note) }
+                    ForEach(Coach.warnings(store: store, exercise: ex).prefix(2)) { w in
+                        WarningRow(warning: w)
+                    }
+                    Color.clear.frame(height: 12)
+                }
+                .padding(20)
+            }
+            footer
+
+        case let .hold(low, high):
+            ScrollView(showsIndicators: false) {
+                VStack(spacing: 14) {
+                    HoldTimerView(exercise: ex,
+                                  target: Coach.holdTarget(for: ex, store: store),
+                                  setNumber: setNumber) { seconds in
+                        heldSeconds = seconds
+                        withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) { phase = .rate }
+                    }
+                    HStack(spacing: 10) {
+                        Image(systemName: "info.circle.fill").foregroundStyle(Theme.textDim)
+                        Text("The clock is just for you — the coach sets your next target from how the hold felt, not from the seconds. Plan range \(low)–\(high)s.")
+                            .font(.system(size: 12, weight: .medium, design: .rounded))
+                            .foregroundStyle(Theme.textDim)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Spacer(minLength: 0)
+                    }
+                    .padding(14).frame(maxWidth: .infinity, alignment: .leading).card(Theme.surface)
+                    Button { infoExercise = ex } label: {
+                        Label("How to do this", systemImage: "questionmark.circle")
+                            .font(.system(size: 13, weight: .bold, design: .rounded))
+                            .foregroundStyle(Theme.textDim)
+                    }
+                    .buttonStyle(.plain)
+                    Color.clear.frame(height: 20)
+                }
+                .padding(20)
+            }
+
+        case let .trail(low, high):
+            let plan = Coach.trailPlan(for: ex, store: store)
+            TrailSessionView(exercise: ex,
+                             targetLow: plan.lowMin > 0 ? plan.lowMin : low,
+                             targetHigh: plan.highMin > 0 ? plan.highMin : high) { tracker in
+                pendingRun = PendingRun(seconds: tracker.elapsed, meters: tracker.meters,
+                                        splits: tracker.splits, autoPauses: tracker.autoPauses,
+                                        pausedSeconds: tracker.pausedSeconds,
+                                        usedLocation: tracker.usedLocation,
+                                        low: plan.lowMin, high: plan.highMin)
+                withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) { phase = .rate }
+            }
+
+        case let .amrap(minutes, movements):
+            AmrapView(exercise: ex, minutes: minutes, movements: movements,
+                      bestRounds: store.state(for: ex.id).bestRounds,
+                      brief: Coach.conditioningBrief(for: ex, store: store)) { rounds, partial, seconds, splits in
+                pendingCond = PendingCond(rounds: rounds, partial: partial, seconds: seconds, splits: splits)
+                withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) { phase = .rate }
+            }
+
+        case let .rounds(count, movements, rest):
+            RoundsRunnerView(exercise: ex, roundCount: count, movements: movements, restSeconds: rest,
+                             brief: Coach.conditioningBrief(for: ex, store: store)) { rounds, seconds, splits in
+                pendingCond = PendingCond(rounds: rounds, partial: 0, seconds: seconds, splits: splits)
+                withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) { phase = .rate }
+            }
+
+        case let .forTime(rounds, movements):
+            let best = store.conditioningResults(exerciseID: ex.id).map(\.seconds).filter { $0 > 0 }.min() ?? 0
+            ForTimeView(exercise: ex, roundCount: rounds, movements: movements, previousBest: best,
+                        brief: Coach.conditioningBrief(for: ex, store: store)) { done, seconds, splits in
+                pendingCond = PendingCond(rounds: done, partial: 0, seconds: seconds, splits: splits)
+                withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) { phase = .rate }
+            }
+        }
+    }
+
     // MARK: Setup
 
     private func prepare() {
         for ex in exercises {
+            guard case .reps = ex.modality else { continue }
             let s = Coach.suggestion(for: ex, store: store)
             suggestions[ex.id] = s
             weights[ex.id] = s.weight
         }
+        if let first = current { reps = first.repTarget }
     }
 
     // MARK: Header / footer
@@ -166,7 +263,9 @@ struct WorkoutView: View {
     private var phaseCaption: String {
         guard let ex = current, !day.kind.isRest else { return "Week \(day.week) · \(day.weekdayName)" }
         switch phase {
-        case .lift: return "\(ex.name) · set \(setNumber) of \(ex.sets)"
+        case .lift:
+            if ex.modality.isSingleEffort { return "Week \(day.week) · \(day.weekdayName)" }
+            return "\(ex.name) · set \(setNumber) of \(ex.sets)"
         case .rate: return "How did that feel?"
         case .rest: return "Resting"
         }
@@ -184,6 +283,7 @@ struct WorkoutView: View {
     private var buttonTitle: String {
         if day.kind.isRest { return "Log rest day" }
         guard let ex = current else { return "Finish workout" }
+        if !ex.tracksWeight && ex.repTarget > 0 { return "Set \(setNumber) done · \(reps) reps" }
         return "Set \(setNumber) done · \(weightLabel(ex))"
     }
 
@@ -214,13 +314,46 @@ struct WorkoutView: View {
     }
 
     private func record(effort: Effort, for ex: Exercise) {
+        // Trail and conditioning are one effort for the whole activity.
+        if let run = pendingRun {
+            let session = CardioSession(dayIndex: day.index, exerciseID: ex.id,
+                                        seconds: run.seconds, meters: run.meters,
+                                        targetLowMin: run.low, targetHighMin: run.high,
+                                        usedLocation: run.usedLocation, autoPauses: run.autoPauses,
+                                        pausedSeconds: run.pausedSeconds, splits: run.splits, effort: effort)
+            store.save(session)
+            activityNotes.append(Coach.apply(session, exercise: ex, store: store))
+            doneSets[ex.id] = ex.sets
+            store.awardCoins(for: effort, restOvertime: 0)
+            pendingRun = nil
+            finish()
+            return
+        }
+        if let cond = pendingCond {
+            let result = ConditioningResult(dayIndex: day.index, exerciseID: ex.id,
+                                            rounds: cond.rounds, partialReps: cond.partial,
+                                            seconds: cond.seconds, roundSplits: cond.splits, effort: effort)
+            store.save(result)
+            if let n = Coach.apply(result, exercise: ex, store: store) { activityNotes.append(n) }
+            doneSets[ex.id] = ex.sets
+            store.awardCoins(for: effort, restOvertime: 0)
+            pendingCond = nil
+            finish()
+            return
+        }
+
         let weight = weights[ex.id] ?? 0
         let target = Coach.restTarget(for: ex, profile: store.profile)
         pendingEffort = effort
         doneSets[ex.id] = (doneSets[ex.id] ?? 0) + 1
 
-        store.save(SetRecord(dayIndex: day.index, exerciseID: ex.id, setNumber: setNumber,
-                             weight: weight, effort: effort, restSeconds: 0, restTarget: target))
+        let rec = SetRecord(dayIndex: day.index, exerciseID: ex.id, setNumber: setNumber,
+                            weight: weight, effort: effort, restSeconds: 0, restTarget: target)
+        rec.heldSeconds = heldSeconds
+        rec.reps = ex.tracksWeight ? 0 : reps
+        store.save(rec)
+        effortsThisExercise.append(effort)
+        heldSeconds = 0
 
         // Mid-workout weight correction from the coach.
         if let nudge = Coach.nudgeAfterSet(exercise: ex, effort: effort, weight: weight, setNumber: setNumber) {
@@ -250,9 +383,15 @@ struct WorkoutView: View {
         try? store.context.save()
 
         if setNumber > ex.sets {
+            if case .hold = ex.modality,
+               let n = Coach.applyHold(exercise: ex, efforts: effortsThisExercise, store: store) {
+                activityNotes.append(n)
+            }
+            effortsThisExercise = []
             exerciseIndex += 1
             setNumber = 1
             coachNote = nil
+            reps = current?.repTarget ?? 0
             flash(Copy.exerciseDone.randomElement()!)
         }
         withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) { phase = .lift }
@@ -266,6 +405,10 @@ struct WorkoutView: View {
     }
 
     private func finish() {
+        if let ex = current, case .hold = ex.modality,
+           let n = Coach.applyHold(exercise: ex, efforts: effortsThisExercise, store: store) {
+            activityNotes.append(n)
+        }
         var results: [String: (sets: Int, weight: Double)] = [:]
         for ex in exercises {
             results[ex.id] = (sets: doneSets[ex.id] ?? 0, weight: weights[ex.id] ?? 0)
@@ -277,7 +420,7 @@ struct WorkoutView: View {
         store.awardBonus(bonus)
 
         // What the coach will do differently next time.
-        var notes: [String] = []
+        var notes: [String] = activityNotes.filter { !$0.isEmpty }
         for ex in exercises where ex.tracksWeight {
             let next = Coach.suggestion(for: ex, store: store)
             if next.direction == .up { notes.append("\(ex.name) → \(Int(next.weight)) lb next time") }
@@ -415,15 +558,18 @@ struct WarningRow: View {
 struct EffortPicker: View {
     let exercise: Exercise
     let setNumber: Int
+    var wholeActivity: Bool = false
     let onPick: (Effort) -> Void
 
     var body: some View {
         VStack(spacing: 18) {
             Spacer()
-            Text("Set \(setNumber) — how did that feel?")
+            Text(wholeActivity ? "How did that go?" : "Set \(setNumber) — how did that feel?")
                 .font(.system(size: 22, weight: .black, design: .rounded))
                 .foregroundStyle(Theme.text)
-            Text("Be honest. This is what the coach uses to pick your next weight.")
+            Text(wholeActivity
+                 ? "Your answer plus what the session data shows decides the next target."
+                 : "Be honest. This is what the coach uses to pick your next weight.")
                 .font(.system(size: 13, weight: .medium, design: .rounded))
                 .foregroundStyle(Theme.textDim)
                 .multilineTextAlignment(.center)
@@ -473,6 +619,14 @@ struct EffortPicker: View {
     }
 
     private func blurb(_ e: Effort) -> String {
+        if wholeActivity {
+            switch e {
+            case .easy: return "Could have kept going comfortably"
+            case .good: return "Worked for it, finished strong"
+            case .hard: return "Really had to dig in"
+            case .failed: return "Bailed out before the end"
+            }
+        }
         switch e {
         case .easy: return "Could have done several more"
         case .good: return "Finished it, last rep was work"

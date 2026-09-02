@@ -235,6 +235,178 @@ enum Coach {
         }
     }
 
+    // MARK: - Trail sessions
+
+    struct TrailPlan {
+        var lowMin: Int
+        var highMin: Int
+        var headline: String
+        var reason: String
+    }
+
+    static func trailPlan(for exercise: Exercise, store: Store) -> TrailPlan {
+        guard case let .trail(low, high) = exercise.modality else {
+            return TrailPlan(lowMin: 30, highMin: 40, headline: "Easy miles", reason: "")
+        }
+        let st = store.state(for: exercise.id)
+        let lo = st.cardioLowMin > 0 ? st.cardioLowMin : low
+        let hi = st.cardioHighMin > 0 ? st.cardioHighMin : high
+
+        guard let last = store.cardioSessions(exerciseID: exercise.id).first else {
+            return TrailPlan(lowMin: lo, highMin: hi,
+                             headline: "\(lo)–\(hi) minutes, easy",
+                             reason: "Turn location on and the coach can set this window from your actual pace instead of guessing.")
+        }
+        return TrailPlan(lowMin: lo, highMin: hi,
+                         headline: "\(lo)–\(hi) minutes, easy",
+                         reason: summary(of: last))
+    }
+
+    private static func summary(of s: CardioSession) -> String {
+        var parts: [String] = []
+        parts.append("Last time: \(Int(s.minutes)) min")
+        if s.usedLocation {
+            parts.append(String(format: "%.2f mi at %@/mi", s.miles, RunTracker.paceString(s.pace)))
+            if s.fadePercent > 12 { parts.append("you faded in the back half") }
+            else if s.fadePercent < -8 { parts.append("you finished stronger than you started") }
+            else { parts.append("pace held steady") }
+        }
+        if s.autoPauses > 0 { parts.append("\(s.autoPauses) stop\(s.autoPauses == 1 ? "" : "s")") }
+        return parts.joined(separator: " · ") + "."
+    }
+
+    /// Reads the run itself — not just the effort rating — to move the target window.
+    /// Returns a sentence for the celebration screen.
+    @discardableResult
+    static func apply(_ session: CardioSession, exercise: Exercise, store: Store) -> String {
+        guard case let .trail(baseLow, baseHigh) = exercise.modality else { return "" }
+        let st = store.state(for: exercise.id)
+        var lo = st.cardioLowMin > 0 ? st.cardioLowMin : baseLow
+        var hi = st.cardioHighMin > 0 ? st.cardioHighMin : baseHigh
+        let done = Int(session.minutes.rounded())
+        var note: String
+
+        if session.finishedShort {
+            if !session.usedLocation {
+                lo = max(10, lo - 5); hi = max(lo + 10, hi - 5)
+                note = "Cut short — dropping the target to \(lo)–\(hi) min so you finish the next one."
+            } else if session.fadePercent > 15 || session.autoPauses >= 2 {
+                // Pace collapsed: the distance was the problem, not the clock.
+                lo = max(10, min(done, lo) - 5)
+                hi = max(lo + 10, lo + (baseHigh - baseLow))
+                note = "You slowed hard before stopping, so the coach cut the target to \(lo)–\(hi) min. Build it back from there."
+            } else {
+                // Steady pace right up to the end — they ran out of time, not legs.
+                lo = max(15, lo - 5)
+                note = "Pace was steady the whole way, so only a small trim to \(lo)–\(hi) min. Your legs weren't the limit."
+            }
+        } else if session.finishedLong {
+            if session.usedLocation && session.fadePercent > 15 {
+                note = "You went long but faded badly. Target stays at \(lo)–\(hi) min — hold the pace before adding time."
+            } else if session.effort == .easy || session.fadePercent < -5 {
+                lo = min(90, lo + 5); hi = min(120, hi + 5)
+                note = "Long and steady. Target moves up to \(lo)–\(hi) min."
+            } else {
+                note = "Nice extra time. Target holds at \(lo)–\(hi) min until it feels easy."
+            }
+        } else {
+            switch session.effort {
+            case .easy:
+                lo = min(90, lo + 5); hi = min(120, hi + 5)
+                note = "That was easy — target moves up to \(lo)–\(hi) min."
+            case .failed, .hard:
+                if session.usedLocation && session.fadePercent > 20 {
+                    note = "You finished the window but faded a lot. Same target, try starting slower."
+                } else {
+                    note = "Solid work. Same window next time."
+                }
+            default:
+                note = "In the window and holding together. Same target next time."
+            }
+        }
+
+        st.cardioLowMin = lo
+        st.cardioHighMin = hi
+        try? store.context.save()
+        return note
+    }
+
+    // MARK: - Holds
+
+    /// Hold targets move on the effort rating, never on the stopwatch reading —
+    /// the timer is there for the user, not for grading.
+    static func holdTarget(for exercise: Exercise, store: Store) -> Int {
+        guard case let .hold(low, high) = exercise.modality else { return 30 }
+        let st = store.state(for: exercise.id)
+        if st.holdTarget > 0 { return st.holdTarget }
+        return store.profile.experience == .beginner ? low : (low + high) / 2
+    }
+
+    static func applyHold(exercise: Exercise, efforts: [Effort], store: Store) -> String? {
+        guard case let .hold(low, high) = exercise.modality, !efforts.isEmpty else { return nil }
+        let st = store.state(for: exercise.id)
+        let current = holdTarget(for: exercise, store: store)
+        let avg = Double(efforts.map(\.rawValue).reduce(0, +)) / Double(efforts.count)
+        var target = current
+        if efforts.contains(.failed) || avg >= 2.4 { target = max(low - 10, current - 5) }
+        else if avg <= 0.5 { target = min(high + 60, current + 10) }
+        else if avg <= 1.2 { target = min(high + 60, current + 5) }
+        guard target != current else { return nil }
+        st.holdTarget = max(10, target)
+        try? store.context.save()
+        return "\(exercise.name) → \(st.holdTarget)s next time"
+    }
+
+    // MARK: - Conditioning
+
+    static func conditioningBrief(for exercise: Exercise, store: Store) -> String {
+        let st = store.state(for: exercise.id)
+        let history = store.conditioningResults(exerciseID: exercise.id)
+        switch exercise.modality {
+        case .amrap:
+            if st.bestRounds > 0 { return "Your best is \(st.bestRounds) rounds. Hold a pace you can keep to the last minute and beat it by one." }
+            return "Pick a pace you could hold for the whole clock. The first round should feel too slow."
+        case .rounds:
+            if let last = history.first { return "Last time: \(RunTracker.clock(last.seconds)) total. Take the full rest — the rounds should stay fast." }
+            return "The rest between rounds is prescribed, not optional. It's what keeps each round honest."
+        case .forTime:
+            if let best = history.map(\.seconds).filter({ $0 > 0 }).min() {
+                return "Best: \(RunTracker.clock(best)). Break the reps up early so you never fully stall."
+            }
+            return "Go steady on round one. Almost everyone starts too fast here."
+        default:
+            return ""
+        }
+    }
+
+    @discardableResult
+    static func apply(_ result: ConditioningResult, exercise: Exercise, store: Store) -> String? {
+        let st = store.state(for: exercise.id)
+        switch exercise.modality {
+        case .amrap:
+            guard result.rounds > st.bestRounds else {
+                let splits = result.roundSplits
+                if splits.count >= 3, let first = splits.first, let last = splits.last, last > first * 3 / 2 {
+                    return "\(exercise.name): your rounds slowed by half by the end — start slower next time"
+                }
+                return nil
+            }
+            st.bestRounds = result.rounds
+            try? store.context.save()
+            return "\(exercise.name): new best at \(result.rounds) rounds"
+        case .forTime:
+            let prior = store.conditioningResults(exerciseID: exercise.id)
+                .filter { $0.persistentModelID != result.persistentModelID }
+                .map(\.seconds).filter { $0 > 0 }.min()
+            if let prior, result.seconds > 0, result.seconds < prior {
+                return "\(exercise.name): \(RunTracker.clock(prior - result.seconds)) faster than last time"
+            }
+            return nil
+        default:
+            return nil
+        }
+    }
+
     // MARK: - Performance read
 
     struct Readout {

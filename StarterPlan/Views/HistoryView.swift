@@ -179,8 +179,19 @@ struct DayDetailSheet: View {
         }
     }
 
+    private func miniStat(_ v: String, _ l: String) -> some View {
+        VStack(spacing: 2) {
+            Text(v).font(.system(size: 16, weight: .black, design: .rounded)).foregroundStyle(Theme.text)
+            Text(l).font(.system(size: 9, weight: .heavy, design: .rounded)).foregroundStyle(Theme.textDim)
+        }
+        .frame(maxWidth: .infinity).padding(.vertical, 10)
+        .background(RoundedRectangle(cornerRadius: 10).fill(Theme.surfaceHigh))
+    }
+
     private func detailLine(_ r: SetRecord) -> String {
         var parts = [r.effort.label]
+        if r.heldSeconds > 0 { parts.append("held \(r.heldSeconds)s") }
+        if r.reps > 0 { parts.append("\(r.reps) reps") }
         if r.restSeconds > 0 {
             parts.append("rested \(r.restSeconds / 60):\(String(format: "%02d", r.restSeconds % 60))")
             if r.restOvertime > 0 { parts.append("+\(r.restOvertime)s over") }
@@ -194,6 +205,8 @@ struct DayDetailSheet: View {
     var body: some View {
         let day = Plan.day(at: log.dayIndex)
         let records = store.records(forDay: log.dayIndex)
+        let runs = store.cardioSessions(forDay: log.dayIndex)
+        let conds = store.conditioningResults(forDay: log.dayIndex)
         let entries = store.entries(forDay: log.dayIndex)
 
         ScrollView {
@@ -205,6 +218,68 @@ struct DayDetailSheet: View {
                     Text("Week \(day.week) · \(day.weekdayName) · \(log.completedOn.formatted(date: .abbreviated, time: .shortened))")
                         .font(.system(size: 13, weight: .semibold, design: .rounded))
                         .foregroundStyle(Theme.textDim)
+                }
+
+                ForEach(runs, id: \.persistentModelID) { r in
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack {
+                            Label("Trail session", systemImage: "figure.hiking")
+                                .font(.system(size: 14, weight: .heavy, design: .rounded))
+                                .foregroundStyle(Theme.accent)
+                            Spacer()
+                            Text(r.effort.label)
+                                .font(.system(size: 12, weight: .bold, design: .rounded))
+                                .foregroundStyle(Theme.textDim)
+                        }
+                        HStack(spacing: 10) {
+                            miniStat(RunTracker.clock(r.seconds), "TIME")
+                            if r.usedLocation {
+                                miniStat(String(format: "%.2f", r.miles), "MILES")
+                                miniStat(RunTracker.paceString(r.pace), "/MI")
+                            }
+                        }
+                        if r.usedLocation && !r.splits.isEmpty {
+                            let peak = max(r.splits.max() ?? 1, 1)
+                            HStack(alignment: .bottom, spacing: 3) {
+                                ForEach(Array(r.splits.enumerated()), id: \.offset) { _, m in
+                                    RoundedRectangle(cornerRadius: 2)
+                                        .fill(m < peak * 0.6 ? Theme.gold : Theme.accent)
+                                        .frame(height: max(3, 34 * m / peak))
+                                        .frame(maxWidth: .infinity)
+                                }
+                            }
+                            .frame(height: 36)
+                            Text(r.fadePercent > 12 ? "Faded in the back half"
+                                 : (r.fadePercent < -8 ? "Finished stronger than you started" : "Pace held steady"))
+                                .font(.system(size: 11, weight: .semibold, design: .rounded))
+                                .foregroundStyle(Theme.textDim)
+                        }
+                        if r.autoPauses > 0 {
+                            Text("\(r.autoPauses) auto-pause\(r.autoPauses == 1 ? "" : "s") · \(RunTracker.clock(r.pausedSeconds)) stopped")
+                                .font(.system(size: 11, weight: .medium, design: .rounded))
+                                .foregroundStyle(Theme.textDim.opacity(0.8))
+                        }
+                    }
+                    .padding(14).frame(maxWidth: .infinity, alignment: .leading).card(Theme.surface)
+                }
+
+                ForEach(conds, id: \.persistentModelID) { c in
+                    VStack(alignment: .leading, spacing: 8) {
+                        Label("Conditioning", systemImage: "flame.fill")
+                            .font(.system(size: 14, weight: .heavy, design: .rounded))
+                            .foregroundStyle(Theme.flame)
+                        HStack(spacing: 10) {
+                            if c.rounds > 0 { miniStat("\(c.rounds)", "ROUNDS") }
+                            if c.partialReps > 0 { miniStat("+\(c.partialReps)", "REPS") }
+                            if c.seconds > 0 { miniStat(RunTracker.clock(c.seconds), "TIME") }
+                        }
+                        if !c.roundSplits.isEmpty {
+                            Text("Splits: " + c.roundSplits.map { RunTracker.clock($0) }.joined(separator: " · "))
+                                .font(.system(size: 11, weight: .semibold, design: .rounded))
+                                .foregroundStyle(Theme.textDim)
+                        }
+                    }
+                    .padding(14).frame(maxWidth: .infinity, alignment: .leading).card(Theme.surface)
                 }
 
                 if !records.isEmpty {

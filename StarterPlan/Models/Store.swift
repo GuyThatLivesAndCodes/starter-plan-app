@@ -120,6 +120,10 @@ final class ExerciseState {
     var lastWeight: Double
     var fullSessionStreak: Int      // consecutive sessions where every set was hit
     var pendingBump: Bool           // show "+5-10 lb" nudge
+    var cardioLowMin: Int = 0       // coach-adjusted trail window
+    var cardioHighMin: Int = 0
+    var holdTarget: Int = 0         // coach-adjusted hold seconds
+    var bestRounds: Int = 0         // AMRAP personal best
 
     init(exerciseID: String, lastWeight: Double = 0, fullSessionStreak: Int = 0, pendingBump: Bool = false) {
         self.exerciseID = exerciseID
@@ -156,6 +160,8 @@ final class SetRecord {
     var effortRaw: Int
     var restSeconds: Int        // actual rest taken after this set
     var restTarget: Int         // rest the app asked for
+    var heldSeconds: Int = 0    // for holds — shown to the user, not used to grade them
+    var reps: Int = 0           // logged reps when they differ from the target
     var date: Date
 
     var effort: Effort { Effort(rawValue: effortRaw) ?? .good }
@@ -171,6 +177,91 @@ final class SetRecord {
         self.restSeconds = restSeconds
         self.restTarget = restTarget
         self.date = date
+    }
+}
+
+/// A completed trail session. Splits are stored as one meters-per-minute value
+/// per elapsed minute, which is enough to see where someone faded or bailed.
+@Model
+final class CardioSession {
+    var dayIndex: Int
+    var exerciseID: String
+    var date: Date
+    var seconds: Int
+    var meters: Double
+    var targetLowMin: Int
+    var targetHighMin: Int
+    var usedLocation: Bool
+    var autoPauses: Int
+    var pausedSeconds: Int
+    var splitsRaw: String        // comma separated meters-per-minute
+    var effortRaw: Int
+
+    var effort: Effort { Effort(rawValue: effortRaw) ?? .good }
+    var minutes: Double { Double(seconds) / 60 }
+    var splits: [Double] { splitsRaw.split(separator: ",").compactMap { Double($0) } }
+    var miles: Double { meters / 1609.34 }
+
+    /// Seconds per mile. Zero when there's no distance (untracked session).
+    var pace: Double { miles > 0 ? Double(seconds) / miles : 0 }
+
+    /// Negative means they sped up in the back half, positive means they faded.
+    var fadePercent: Double {
+        let s = splits.filter { $0 > 0 }
+        guard s.count >= 4 else { return 0 }
+        let half = s.count / 2
+        let first = s.prefix(half).reduce(0, +) / Double(half)
+        let second = s.suffix(s.count - half).reduce(0, +) / Double(s.count - half)
+        guard first > 0 else { return 0 }
+        return (first - second) / first * 100
+    }
+
+    var finishedShort: Bool { minutes < Double(targetLowMin) - 0.5 }
+    var finishedLong: Bool { minutes > Double(targetHighMin) + 0.5 }
+
+    init(dayIndex: Int, exerciseID: String, seconds: Int, meters: Double,
+         targetLowMin: Int, targetHighMin: Int, usedLocation: Bool,
+         autoPauses: Int, pausedSeconds: Int, splits: [Double], effort: Effort, date: Date = .now) {
+        self.dayIndex = dayIndex
+        self.exerciseID = exerciseID
+        self.date = date
+        self.seconds = seconds
+        self.meters = meters
+        self.targetLowMin = targetLowMin
+        self.targetHighMin = targetHighMin
+        self.usedLocation = usedLocation
+        self.autoPauses = autoPauses
+        self.pausedSeconds = pausedSeconds
+        self.splitsRaw = splits.map { String(format: "%.0f", $0) }.joined(separator: ",")
+        self.effortRaw = effort.rawValue
+    }
+}
+
+/// AMRAP / rounds / for-time result.
+@Model
+final class ConditioningResult {
+    var dayIndex: Int
+    var exerciseID: String
+    var date: Date
+    var rounds: Int
+    var partialReps: Int
+    var seconds: Int
+    var roundSplitsRaw: String    // comma separated seconds per round
+    var effortRaw: Int
+
+    var effort: Effort { Effort(rawValue: effortRaw) ?? .good }
+    var roundSplits: [Int] { roundSplitsRaw.split(separator: ",").compactMap { Int($0) } }
+
+    init(dayIndex: Int, exerciseID: String, rounds: Int, partialReps: Int,
+         seconds: Int, roundSplits: [Int], effort: Effort, date: Date = .now) {
+        self.dayIndex = dayIndex
+        self.exerciseID = exerciseID
+        self.date = date
+        self.rounds = rounds
+        self.partialReps = partialReps
+        self.seconds = seconds
+        self.roundSplitsRaw = roundSplits.map(String.init).joined(separator: ",")
+        self.effortRaw = effort.rawValue
     }
 }
 
@@ -347,6 +438,40 @@ final class Store {
         return true
     }
 
+    func save(_ session: CardioSession) {
+        context.insert(session)
+        try? context.save()
+    }
+
+    func save(_ result: ConditioningResult) {
+        context.insert(result)
+        try? context.save()
+    }
+
+    func cardioSessions(exerciseID: String) -> [CardioSession] {
+        let d = FetchDescriptor<CardioSession>(
+            predicate: #Predicate { $0.exerciseID == exerciseID },
+            sortBy: [SortDescriptor(\.date, order: .reverse)])
+        return (try? context.fetch(d)) ?? []
+    }
+
+    func conditioningResults(exerciseID: String) -> [ConditioningResult] {
+        let d = FetchDescriptor<ConditioningResult>(
+            predicate: #Predicate { $0.exerciseID == exerciseID },
+            sortBy: [SortDescriptor(\.date, order: .reverse)])
+        return (try? context.fetch(d)) ?? []
+    }
+
+    func cardioSessions(forDay index: Int) -> [CardioSession] {
+        let d = FetchDescriptor<CardioSession>(predicate: #Predicate { $0.dayIndex == index })
+        return (try? context.fetch(d)) ?? []
+    }
+
+    func conditioningResults(forDay index: Int) -> [ConditioningResult] {
+        let d = FetchDescriptor<ConditioningResult>(predicate: #Predicate { $0.dayIndex == index })
+        return (try? context.fetch(d)) ?? []
+    }
+
     func saveBody(age: Int, heightIn: Double, weightLb: Double, sex: BodySex, experience: Experience) {
         profile.age = age
         profile.heightIn = heightIn
@@ -412,6 +537,11 @@ final class Store {
         for l in logs { context.delete(l) }
         for e in (try? context.fetch(FetchDescriptor<SessionEntry>())) ?? [] { context.delete(e) }
         for r in (try? context.fetch(FetchDescriptor<SetRecord>())) ?? [] { context.delete(r) }
+        for c in (try? context.fetch(FetchDescriptor<CardioSession>())) ?? [] { context.delete(c) }
+        for c in (try? context.fetch(FetchDescriptor<ConditioningResult>())) ?? [] { context.delete(c) }
+        for s in (try? context.fetch(FetchDescriptor<ExerciseState>())) ?? [] {
+            s.cardioLowMin = 0; s.cardioHighMin = 0; s.holdTarget = 0; s.bestRounds = 0
+        }
         for s in (try? context.fetch(FetchDescriptor<ExerciseState>())) ?? [] {
             s.fullSessionStreak = 0
             s.pendingBump = false

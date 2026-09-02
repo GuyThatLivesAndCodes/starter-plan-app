@@ -2,6 +2,23 @@ import Foundation
 
 // MARK: - Static plan definition (hardcoded, 4 weeks x 7 days)
 
+/// How a piece of work is actually performed — each one gets its own screen.
+enum Modality: Hashable {
+    case reps                                                    // load it, do the reps
+    case hold(low: Int, high: Int)                               // seconds under tension
+    case trail(lowMin: Int, highMin: Int)                        // GPS-tracked (or blind) time on feet
+    case amrap(minutes: Int, movements: [String])                // as many rounds as possible
+    case rounds(count: Int, movements: [String], restSeconds: Int)
+    case forTime(rounds: Int, movements: [String])
+
+    var isSingleEffort: Bool {
+        switch self {
+        case .reps, .hold: return false
+        default: return true
+        }
+    }
+}
+
 struct Exercise: Identifiable, Hashable {
     let id: String
     let name: String
@@ -10,10 +27,20 @@ struct Exercise: Identifiable, Hashable {
     let howTo: String
     let cue: String
     let tracksWeight: Bool
+    let modality: Modality
 
-    init(id: String, name: String, scheme: String, sets: Int, howTo: String, cue: String, tracksWeight: Bool = true) {
+    init(id: String, name: String, scheme: String, sets: Int, howTo: String, cue: String,
+         tracksWeight: Bool = true, modality: Modality = .reps) {
         self.id = id; self.name = name; self.scheme = scheme; self.sets = sets
         self.howTo = howTo; self.cue = cue; self.tracksWeight = tracksWeight
+        self.modality = modality
+    }
+
+    /// Rep target parsed out of the scheme, for the rep tally screen.
+    var repTarget: Int {
+        let digits = scheme.split(whereSeparator: { !$0.isNumber })
+        guard digits.count >= 2, let n = Int(digits[1]) else { return 0 }
+        return n
     }
 }
 
@@ -54,7 +81,15 @@ struct WorkoutDay: Identifiable {
     var index: Int { (week - 1) * 7 + (day - 1) }   // 0...27
     var weekdayName: String { ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"][day - 1] }
     var totalSets: Int { exercises.reduce(0) { $0 + $1.sets } }
-    var xpValue: Int { totalSets * 10 }
+    var xpValue: Int {
+        exercises.reduce(0) { total, ex in
+            switch ex.modality {
+            case .reps, .hold: return total + ex.sets * 10
+            case .trail: return total + 60
+            case .amrap, .rounds, .forTime: return total + 80
+            }
+        }
+    }
 }
 
 enum Plan {
@@ -73,7 +108,8 @@ enum Plan {
                  cue: "Keep your ribs down — don't lean back to finish the press."),
         Exercise(id: "plank", name: "Plank", scheme: "3 x 30-45s", sets: 3,
                  howTo: "Rest on your forearms and toes with your body in one straight line from head to heels. Hold and breathe normally.",
-                 cue: "Squeeze your glutes so your hips don't sag or pike up.", tracksWeight: false)
+                 cue: "Squeeze your glutes so your hips don't sag or pike up.",
+                 tracksWeight: false, modality: .hold(low: 30, high: 45))
     ]
 
     static let strengthB: [Exercise] = [
@@ -91,37 +127,48 @@ enum Plan {
                  cue: "Keep your torso upright and take a long enough step."),
         Exercise(id: "hollow_hold", name: "Hollow Hold", scheme: "3 x 20-30s", sets: 3,
                  howTo: "Lie on your back, press your lower back into the floor, and lift your shoulders and legs a few inches off the ground. Hold that banana shape.",
-                 cue: "If your lower back lifts off the floor, raise your legs higher.", tracksWeight: false)
+                 cue: "If your lower back lifts off the floor, raise your legs higher.",
+                 tracksWeight: false, modality: .hold(low: 20, high: 30))
     ]
 
     static let trailCardio = Exercise(
-        id: "trail_cardio", name: "Trail Cardio", scheme: "30-40 min easy", sets: 3,
+        id: "trail_cardio", name: "Trail Cardio", scheme: "30-40 min easy", sets: 1,
         howTo: "Head out on a trail or hilly route and keep an easy pace for 30–40 minutes. Walking the steep parts is completely fine.",
-        cue: "Easy means you could still hold a conversation the whole time.", tracksWeight: false)
+        cue: "Easy means you could still hold a conversation the whole time.",
+        tracksWeight: false, modality: .trail(lowMin: 30, highMin: 40))
 
     static let optionalTrail = Exercise(
-        id: "optional_trail", name: "Optional Trail Session", scheme: "45-60 min", sets: 3,
+        id: "optional_trail", name: "Optional Trail Session", scheme: "45-60 min", sets: 1,
         howTo: "A relaxed 45–60 minute hike or jog. This one is a bonus — take it if you feel fresh.",
-        cue: "If you're sore or tired, skipping this costs you nothing.", tracksWeight: false)
+        cue: "If you're sore or tired, skipping this costs you nothing.",
+        tracksWeight: false, modality: .trail(lowMin: 45, highMin: 60))
 
     static func conditioning(week: Int) -> [Exercise] {
         switch week {
         case 1:
-            return [Exercise(id: "cond_w1", name: "Scaled Cindy — 12 min AMRAP", scheme: "12 min", sets: 4,
+            return [Exercise(id: "cond_w1", name: "Scaled Cindy", scheme: "12 min AMRAP", sets: 1,
                              howTo: "For 12 minutes, keep repeating: 5 ring rows or jumping pull-ups, 10 knee push-ups, 15 air squats. Count how many full rounds you finish.",
-                             cue: "Pick a pace you can hold for all 12 minutes — steady beats sprint-and-die.", tracksWeight: false)]
+                             cue: "Pick a pace you can hold for all 12 minutes — steady beats sprint-and-die.",
+                             tracksWeight: false,
+                             modality: .amrap(minutes: 12, movements: ["5 ring rows / jumping pull-ups", "10 knee push-ups", "15 air squats"]))]
         case 2:
-            return [Exercise(id: "cond_w2", name: "5 Rounds", scheme: "5 rounds", sets: 5,
+            return [Exercise(id: "cond_w2", name: "Five Rounds", scheme: "5 rounds, 1 min rest", sets: 1,
                              howTo: "Each round is 10 goblet squats, 8 push-ups and a 20 second plank, then rest one full minute before the next round.",
-                             cue: "Actually take the full rest — the rounds should stay fast.", tracksWeight: false)]
+                             cue: "Actually take the full rest — the rounds should stay fast.",
+                             tracksWeight: false,
+                             modality: .rounds(count: 5, movements: ["10 goblet squats", "8 push-ups", "20s plank"], restSeconds: 60))]
         case 3:
-            return [Exercise(id: "cond_w3", name: "Scaled Cindy — 15 min AMRAP", scheme: "15 min", sets: 5,
+            return [Exercise(id: "cond_w3", name: "Scaled Cindy", scheme: "15 min AMRAP", sets: 1,
                              howTo: "Same as week 1 but for 15 minutes: 5 ring rows or jumping pull-ups, 10 knee push-ups, 15 air squats, repeat.",
-                             cue: "Aim to beat your week 1 round count by at least one.", tracksWeight: false)]
+                             cue: "Aim to beat your week 1 round count by at least one.",
+                             tracksWeight: false,
+                             modality: .amrap(minutes: 15, movements: ["5 ring rows / jumping pull-ups", "10 knee push-ups", "15 air squats"]))]
         default:
-            return [Exercise(id: "cond_w4", name: "3 Rounds For Time", scheme: "3 rounds", sets: 3,
+            return [Exercise(id: "cond_w4", name: "Three Rounds For Time", scheme: "3 rounds, for time", sets: 1,
                              howTo: "As fast as you safely can: 15 air squats, 12 push-ups, 400m run. Three times through. Note your finish time.",
-                             cue: "Break the push-ups up early so you never fully stall.", tracksWeight: false)]
+                             cue: "Break the push-ups up early so you never fully stall.",
+                             tracksWeight: false,
+                             modality: .forTime(rounds: 3, movements: ["15 air squats", "12 push-ups", "400m run"]))]
         }
     }
 
